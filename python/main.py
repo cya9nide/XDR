@@ -1,6 +1,7 @@
 """XDR helper app — boots the cursed pipeline.
 
-Phase 1-2: fake/live FFT → frames.bin. Phase 3+: SoapySDR hardware.
+Phase 1: fake SDR → CSV scarecrow → Excel paints cells.
+Phase 2+: binary frames.bin wire. Phase 3+: SoapySDR hardware.
 """
 
 from __future__ import annotations
@@ -39,20 +40,43 @@ def rng_bins(rng: np.random.Generator, n: int = 128, drift: float = 0.3) -> np.n
 
 
 def run_fake(duration: float, per_frame: float) -> None:
-    """Fake SDR: write random bins every `per_frame` seconds."""
+    """Fake SDR, binary wire: write random bins to frames.bin."""
     out = DATA_DIR / "frames.bin"
     out.parent.mkdir(exist_ok=True)
     rng = np.random.default_rng(0xC0FFEE)
     n = 0
     t0 = time.perf_counter()
     deadline = t0 + duration if duration > 0 else None
-    print(f"[xdr] fake mode: writing frames -> {out} ({per_frame:.2f}s/frame)")
+    print(f"[xdr] fake bin mode: writing frames -> {out} ({per_frame:.2f}s/frame)")
     while True:
         n += 1
         bins = rng_bins(rng)
         write_frame(out, Frame(n, bins))
         if n % 10 == 0:
             print(f"[xdr] frame {n} seq={n} peak={bins.max():.2f}")
+        if deadline and time.perf_counter() >= deadline:
+            break
+        time.sleep(per_frame)
+
+
+def run_fake_csv(duration: float, per_frame: float) -> None:
+    """Fake SDR, Phase 1 CSV scarecrow: 128 values per line, overwritten in place."""
+    out = DATA_DIR / "frames.csv"
+    out.parent.mkdir(exist_ok=True)
+    rng = np.random.default_rng(0xC0FFEE)
+    n = 0
+    t0 = time.perf_counter()
+    deadline = t0 + duration if duration > 0 else None
+    print(f"[xdr] fake CSV mode: writing {out} ({per_frame:.2f}s/frame)")
+    while True:
+        n += 1
+        bins = rng_bins(rng)
+        line = ",".join(f"{b:.4f}" for b in bins)
+        tmp = out.with_suffix(".tmp")
+        tmp.write_text(line)
+        tmp.replace(out)
+        if n % 10 == 0:
+            print(f"[xdr] csv frame {n} peak={bins.max():.2f}")
         if deadline and time.perf_counter() >= deadline:
             break
         time.sleep(per_frame)
@@ -72,7 +96,6 @@ def run_live_fft(source: Path, per_frame: float) -> None:
 
     n = 0
     step = 4096
-    # slide a window through the file; wrap when we reach the end
     pos = 0
     while True:
         n += 1
@@ -92,16 +115,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=APP_TITLE)
     parser.add_argument("--mode", choices=["fake", "live"], default="fake")
     parser.add_argument("--source", type=Path, default=None, help="IQ file for --mode live")
-    parser.add_argument("--fps", type=float, default=4.0, help="fake/live frames per second")
+    parser.add_argument("--wire", choices=["bin", "csv"], default="bin",
+                        help="Phase 1 scarecrow (csv) or binary protocol (bin)")
+    parser.add_argument("--fps", type=float, default=4.0, help="frames per second")
     parser.add_argument("--duration", type=float, default=0, help="seconds to run (0 = forever)")
     args = parser.parse_args()
     per_frame = 1.0 / args.fps if args.fps > 0 else 1.0
     print(f"{APP_TITLE} — booting.")
     print(f"  data dir: {DATA_DIR}")
-    print(f"  mode: {args.mode}   fps: {args.fps}   duration: {args.duration}s")
+    print(f"  mode: {args.mode}   wire: {args.wire}   fps: {args.fps}   duration: {args.duration}s")
     DATA_DIR.mkdir(exist_ok=True)
     if args.mode == "fake":
-        run_fake(args.duration, per_frame)
+        if args.wire == "csv":
+            run_fake_csv(args.duration, per_frame)
+        else:
+            run_fake(args.duration, per_frame)
     else:
         src = args.source or (Path(__file__).resolve().parent.parent / "samples" / "demo.iq")
         run_live_fft(src, per_frame)
