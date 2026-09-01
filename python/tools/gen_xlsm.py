@@ -31,7 +31,6 @@ RAMP = [
 ]
 
 VBA = r"""
-Attribute VB_Name = "XDRMain"
 Option Explicit
 Const MODULE_TEST As String = "imported-ok"
 ' Phase 1: fake SDR waterfall in cells.
@@ -77,17 +76,17 @@ End Sub
 ' ── waterfall core ─────────────────────────────────────────────────────
 ' Paints (rows x bins) cells at (firstRow, firstCol).
 ' Takes a 2D array (bins, rows) ascol; a later row index = older data.
-Public Sub PaintWaterfall(bins() As Double, byVal rows As Long)
+Public Sub PaintWaterfall(frameData() As Double, ByVal rowCount As Long)
     Dim i As Long, j As Long, c As Long
     Dim r As Range, cell As Range
     On Error Resume Next
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rows - 1, FIRST_COL + BINS - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1))
     r.Clear
-    For j = 0 To rows - 1
+    For j = 0 To rowCount - 1
         For i = 0 To BINS - 1
-            c = ColorFor(bins(i, j))
+            c = ColorFor(frameData(i, j))
             Set cell = r.Cells(j + 1, i + 1)
             cell.Interior.Color = c
         Next i
@@ -97,13 +96,27 @@ End Sub
 
 ' Maps a 0..1 magnitude to a BGR color via the fixed ramp.
 Public Function ColorFor(m As Double) As Long
-    If m <= 0# Then ColorFor = RAMP(0): Exit Function
-    If m >= 1# Then ColorFor = RAMP(UBound(RAMP)): Exit Function
+    If m <= 0# Then ColorFor = GetRampColor(0): Exit Function
+    If m >= 1# Then ColorFor = GetRampColor(7): Exit Function
     Dim pos As Double
     Dim lo As Long, hi As Long, t As Double
-    pos = m * (UBound(RAMP) - 1)
+    pos = m * 6#
     lo = Int(pos): hi = lo + 1: t = pos - lo
-    ColorFor = BlendColor(RAMP(lo), RAMP(hi), t)
+    ColorFor = BlendColor(GetRampColor(lo), GetRampColor(hi), t)
+End Function
+
+Private Function GetRampColor(idx As Long) As Long
+    Select Case idx
+        Case 0: GetRampColor = &H0&
+        Case 1: GetRampColor = &H6000&
+        Case 2: GetRampColor = &HC80000&
+        Case 3: GetRampColor = &HC86000&
+        Case 4: GetRampColor = &H00C8C8&
+        Case 5: GetRampColor = &H00C860&
+        Case 6: GetRampColor = &HC8C800&
+        Case 7: GetRampColor = &HC8C8C8&
+        Case Else: GetRampColor = &H0&
+    End Select
 End Function
 
 Public Function BlendColor(a As Long, b As Long, t As Double) As Long

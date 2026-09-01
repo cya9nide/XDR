@@ -1,6 +1,5 @@
 Attribute VB_Name = "XDRMain"
 
-Attribute VB_Name = "XDRMain"
 Option Explicit
 Const MODULE_TEST As String = "imported-ok"
 ' Phase 1: fake SDR waterfall in cells.
@@ -9,8 +8,8 @@ Const MODULE_TEST As String = "imported-ok"
 Public Const S_DATA_DIR As String = "..\xdr_data\"
 Public Const S_FRAME_FILE As String = "frames.csv"
 Public Const WS_WATERFALL As String = "Waterfall"
-Public Const bins As Long = 128
-Public Const rows As Long = 64
+Public Const BINS As Long = 128
+Public Const ROWS As Long = 64
 Public Const FIRST_COL As Long = 2
 Public Const FIRST_ROW As Long = 2
 Public Const FPS_AVG_N As Long = 30
@@ -46,17 +45,17 @@ End Sub
 ' -- waterfall core -----------------------------------------------------
 ' Paints (rows x bins) cells at (firstRow, firstCol).
 ' Takes a 2D array (bins, rows) ascol; a later row index = older data.
-Public Sub PaintWaterfall(bins() As Double, ByVal rows As Long)
+Public Sub PaintWaterfall(frameData() As Double, ByVal rowCount As Long)
     Dim i As Long, j As Long, c As Long
     Dim r As Range, cell As Range
     On Error Resume Next
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rows - 1, FIRST_COL + bins - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1))
     r.Clear
-    For j = 0 To rows - 1
-        For i = 0 To bins - 1
-            c = ColorFor(bins(i, j))
+    For j = 0 To rowCount - 1
+        For i = 0 To BINS - 1
+            c = ColorFor(frameData(i, j))
             Set cell = r.Cells(j + 1, i + 1)
             cell.Interior.Color = c
         Next i
@@ -66,13 +65,27 @@ End Sub
 
 ' Maps a 0..1 magnitude to a BGR color via the fixed ramp.
 Public Function ColorFor(m As Double) As Long
-    If m <= 0# Then ColorFor = RAMP(0): Exit Function
-    If m >= 1# Then ColorFor = RAMP(UBound(RAMP)): Exit Function
+    If m <= 0# Then ColorFor = GetRampColor(0): Exit Function
+    If m >= 1# Then ColorFor = GetRampColor(7): Exit Function
     Dim pos As Double
     Dim lo As Long, hi As Long, t As Double
-    pos = m * (UBound(RAMP) - 1)
+    pos = m * 6#
     lo = Int(pos): hi = lo + 1: t = pos - lo
-    ColorFor = BlendColor(RAMP(lo), RAMP(hi), t)
+    ColorFor = BlendColor(GetRampColor(lo), GetRampColor(hi), t)
+End Function
+
+Private Function GetRampColor(idx As Long) As Long
+    Select Case idx
+        Case 0: GetRampColor = &H0&
+        Case 1: GetRampColor = &H6000&
+        Case 2: GetRampColor = &HC80000
+        Case 3: GetRampColor = &HC86000
+        Case 4: GetRampColor = &HC8C8&
+        Case 5: GetRampColor = &HC860&
+        Case 6: GetRampColor = &HC8C800
+        Case 7: GetRampColor = &HC8C8C8
+        Case Else: GetRampColor = &H0&
+    End Select
 End Function
 
 Public Function BlendColor(a As Long, b As Long, t As Double) As Long
@@ -102,22 +115,22 @@ Public Sub ReadCSV()
     line = ts.ReadAll
     ts.Close
     parts = Split(line, ",")
-    If UBound(parts) <> bins - 1 Then Exit Sub
+    If UBound(parts) <> BINS - 1 Then Exit Sub
     tStart = Timer
     seq = m_frameSeq + 1
     m_frameSeq = seq
     m_paintCount = m_paintCount + 1
     ' Shift ring down one row; new frame becomes the top row.
     Dim j As Long
-    For j = rows - 1 To 1 Step -1
-        For i = 0 To bins - 1
+    For j = ROWS - 1 To 1 Step -1
+        For i = 0 To BINS - 1
             m_ring(i, j) = m_ring(i, j - 1)
         Next i
     Next j
-    For i = 0 To bins - 1
+    For i = 0 To BINS - 1
         m_ring(i, 0) = CDbl(parts(i))
     Next i
-    PaintWaterfall m_ring, rows
+    PaintWaterfall m_ring, ROWS
     Dim dt As Double
     dt = (Timer - tStart) * 1000#
     m_lastPaintMs = dt
@@ -170,7 +183,7 @@ Public Sub StartLoop()
     m_running = True
     m_loopScheduled = False
     m_frameSeq = 0: m_paintCount = 0
-    ReDim m_ring(0 To bins - 1, 0 To rows - 1)
+    ReDim m_ring(0 To BINS - 1, 0 To ROWS - 1)
     ReDim m_diagWindow(0 To FPS_AVG_N - 1)
     SetVal "status_cell", "STARTING"
     Call ScheduleTick(0.05)
@@ -203,13 +216,13 @@ Public Sub TestPaint()
     ' Paint a gradient test frame so you can see the ramp without Python.
     Dim arr() As Double
     Dim i As Long, j As Long
-    ReDim arr(0 To bins - 1, 0 To rows - 1)
-    For j = 0 To rows - 1
-        For i = 0 To bins - 1
-            arr(i, j) = (i + j * 0.5) / (bins + rows * 0.5)
+    ReDim arr(0 To BINS - 1, 0 To ROWS - 1)
+    For j = 0 To ROWS - 1
+        For i = 0 To BINS - 1
+            arr(i, j) = (i + j * 0.5) / (BINS + ROWS * 0.5)
         Next i
     Next j
-    PaintWaterfall arr, rows
+    PaintWaterfall arr, ROWS
 End Sub
 
 Public Sub HardReset()
@@ -226,7 +239,7 @@ Public Sub HardReset()
     On Error Resume Next
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rows - 1, FIRST_COL + bins - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
     r.Clear
     On Error GoTo 0
 End Sub
