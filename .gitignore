@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data / runtime (never commit)
+xdr_data/
+frames.bin
+cmd.bin
+
+# IQ captures
+samples/*.iq
+samples/*.raw
+samples/*.bin
+samples/*.c8
+samples/*.wav
+!samples/README.md
+
+# Office temp files
+~$*.xls*
+*.tmp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Docs
+docs/screenshots/*.png
