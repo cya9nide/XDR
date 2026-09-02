@@ -2,6 +2,21 @@
 
 Fixed-layout, little-endian, no text parsing anywhere.
 See docs/protocol.md for the full spec.
+
+Layout is aligned so VBA can read it with a native Type (Get #f,, udt):
+doubles land on 8-byte boundaries, singles/uint32 on 4-byte boundaries.
+
+Offsets:
+   0   4  magic      u32   ("XDR1" = 0x58445231)
+   4   4  sequence   u32
+   8   8  timestamp  f64   (unix seconds)
+  16 512  bins       128 × f32 FFT magnitude (dB), one per waterfall column
+ 528   8  sample_rate f64  Hz
+ 536   4  peak_idx   u32   bin with max magnitude
+ 540   4  peak_val   f32   its magnitude
+ 544   4  flags      u32   bit0 live/recorded, bit1 sample-rate valid
+ 548   4  reserved   u32
+ 552      (record size)
 """
 
 from __future__ import annotations
@@ -19,7 +34,7 @@ CMD_SIZE = 16         # bytes in cmd.bin
 FLAG_LIVE = 0x1        # source is live hardware (vs recorded)
 FLAG_SR_VALID = 0x2    # sample_rate field is meaningful
 
-_FRAME_STRUCT = struct.Struct("<I I d 128f I f I d I")
+_FRAME_STRUCT = struct.Struct("<I I d 128f d I f I I")
 _CMD_STRUCT = struct.Struct("<IIII")
 
 
@@ -40,9 +55,12 @@ class Frame:
         self.magic = MAGIC
         self.sequence = int(sequence)
         self.timestamp = time.time() if timestamp is None else timestamp
-        self.bins = list(bins[:NBINS]) if len(bins) >= NBINS else list(bins) + [0.0] * (NBINS - len(bins))
-        if not (0 <= len(self.bins) <= NBINS):
-            raise ValueError(f"bins must be 0..{NBINS} long, got {len(self.bins)}")
+        b = list(bins)
+        if len(b) > NBINS:
+            b = b[:NBINS]
+        elif len(b) < NBINS:
+            b = b + [0.0] * (NBINS - len(b))
+        self.bins = b
         self.peak_idx, self.peak_val = _peak(self.bins)
         self.flags = int(flags)
         self.sample_rate = float(sample_rate)
@@ -53,10 +71,10 @@ class Frame:
             self.sequence,
             self.timestamp,
             *self.bins,
+            self.sample_rate,
             self.peak_idx,
             self.peak_val,
             self.flags,
-            self.sample_rate,
             0,  # reserved
         )
 
@@ -76,7 +94,7 @@ def unpack_frame(data: bytes):
     if magic != MAGIC:
         return None
     bins = rest[:128]
-    (peak_idx, peak_val, flags, sr, _reserved) = rest[128:]
+    (sample_rate, peak_idx, peak_val, flags, _reserved) = rest[128:]
     f = Frame.__new__(Frame)
     f.magic = magic
     f.sequence = seq
@@ -85,7 +103,7 @@ def unpack_frame(data: bytes):
     f.peak_idx = peak_idx
     f.peak_val = peak_val
     f.flags = flags
-    f.sample_rate = sr
+    f.sample_rate = sample_rate
     return f
 
 
@@ -120,7 +138,7 @@ def write_frame(path, frame: Frame) -> None:
     p.write_bytes(frame.pack())
 
 
-# ── cmd.bin —──────────────────────────────────────────────────────────────
+# ── cmd.bin ───────────────────────────────────────────────────────────────
 
 class Cmd:
     __slots__ = ("freq_hz", "sample_rate", "gain_x10", "refresh_ms")
@@ -130,6 +148,9 @@ class Cmd:
         self.sample_rate = int(sample_rate)
         self.gain_x10 = int(gain_x10)
         self.refresh_ms = int(refresh_ms)
+        # sanitize — nobody needs a 0-refresh spin (Excel side also guards)
+        if self.refresh_ms < 30:
+            self.refresh_ms = 250
 
     def pack(self) -> bytes:
         return _CMD_STRUCT.pack(

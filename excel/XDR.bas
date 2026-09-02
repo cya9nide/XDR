@@ -6,13 +6,26 @@ Const MODULE_TEST As String = "imported-ok"
 ' Scarecrow: reads frames.csv, paints a 128x64 waterfall via cell colors.
 
 Public Const S_DATA_DIR As String = "..\xdr_data\"
-Public Const S_FRAME_FILE As String = "frames.csv"
+Public Const S_FRAME_FILE As String = "frames.bin"
 Public Const WS_WATERFALL As String = "Waterfall"
-Public Const BINS As Long = 128
+Public Const bins As Long = 128
 Public Const ROWS As Long = 64
 Public Const FIRST_COL As Long = 2
 Public Const FIRST_ROW As Long = 2
 Public Const FPS_AVG_N As Long = 30
+
+' frames.bin record — layout aligned so VBA reads it natively with Get #f,, udt
+Public Type XDRFrame
+    magic As Long          ' 0..3    ("XDR1")
+    sequence As Long       ' 4..7
+    timestamp As Double    ' 8..15
+    bins(0 To bins - 1) As Single   ' 16..527 (512 bytes)
+    sample_rate As Double  ' 528..535
+    peak_idx As Long       ' 536..539
+    peak_val As Single     ' 540..543
+    flags As Long          ' 544..547
+    reserved As Long       ' 548..551
+End Type
 
 Private m_frameSeq As Long
 Private m_ring() As Double        ' ring buffer: ROWS x BINS
@@ -21,7 +34,9 @@ Private m_paintCount As Long
 Private m_diagWindow() As Double  ' rolling render-time window
 Private m_running As Boolean
 Private m_loopScheduled As Boolean
-Private m_lastLine As String
+Private m_lastSeq As Long
+Private m_peakIdx As Long
+Private m_peakVal As Single
 Private m_palette(0 To 255) As Long   ' precomputed color ramp lookup
 Private m_paletteInit As Boolean
 Private m_cfReady As Boolean          ' region has a 3-color-scale CF rule
@@ -44,7 +59,7 @@ Private Sub EnsureRing()
     x = UBound(m_ring, 1)
     If Err.Number <> 0 Then
         Err.Clear
-        ReDim m_ring(0 To BINS - 1, 0 To ROWS - 1)
+        ReDim m_ring(0 To bins - 1, 0 To ROWS - 1)
         ReDim m_diagWindow(0 To FPS_AVG_N - 1)
     End If
     On Error GoTo 0
@@ -99,7 +114,7 @@ Public Sub EnsureCF()
     On Error Resume Next
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + bins - 1))
     r.FormatConditions.Delete
     With r.FormatConditions.AddColorScale(ColorScaleType:=3)
         .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
@@ -118,9 +133,9 @@ Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
     Dim vals() As Double
     Dim i As Long, j As Long
     Dim flush As Boolean
-    ReDim vals(1 To rowCount, 1 To BINS)
+    ReDim vals(1 To rowCount, 1 To bins)
     For j = 0 To rowCount - 1
-        For i = 0 To BINS - 1
+        For i = 0 To bins - 1
             vals(j + 1, i + 1) = frameData(i, j)
         Next i
     Next j
@@ -128,7 +143,7 @@ Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
     ' write raw values in one array call
     ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1)).Value = vals
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + bins - 1)).Value = vals
     ' flip calc state to force CF re-eval visually
     If Application.Calculation = xlCalculationManual Then
         Application.Calculate
@@ -145,9 +160,9 @@ Public Sub PaintWaterfallCells(frameData() As Double, ByVal rowCount As Long)
     Dim r As Range
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + bins - 1))
     For j = 0 To rowCount - 1
-        For i = 0 To BINS - 1
+        For i = 0 To bins - 1
             r.Cells(j + 1, i + 1).Interior.Color = ColorFor(frameData(i, j))
         Next i
     Next j
@@ -203,64 +218,58 @@ Public Function BlendColor(a As Long, b As Long, t As Double) As Long
         b1 + (b2 - b1) * t)
 End Function
 
-' -- CSV reader (Phase 1 scarecrow) -------------------------------------
-' Overwrite-in-place: read once per frame, parse, push latest into ring.
-Public Sub ReadCSV()
+' -- binary reader (Phase 2) --------------------------------------------
+' Reads the latest frames.bin record via native Get (aligned UDT), dedupes by
+' sequence, pushes into the ring, and paints via CF.
+Public Sub ReadFrame()
     On Error GoTo EH
     EnsureRing
     Dim p As String
-    Dim fso As Object, ts As Object
-    Dim line As String
-    Dim parts() As String
-    Dim i As Long, seq As Long
-    Dim tStart As Double
+    Dim f As Integer
+    Dim fr As XDRFrame
     p = S_DATA_DIR & S_FRAME_FILE
     If Dir(p) = "" Then
         SetVal "err_cell", "NO FILE: " & p
         Exit Sub
     End If
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    Set ts = fso.OpenTextFile(p, 1)  ' ForReading
-    line = ts.ReadAll
-    ts.Close
-    ' skip if nothing changed since last read (writer hasn't pushed a new frame)
-    If line = m_lastLine Then Exit Sub
-    m_lastLine = line
-    parts = Split(line, ",")
-    If UBound(parts) <> BINS - 1 Then
-        SetVal "err_cell", "COUNT: " & UBound(parts) + 1 & " parts, want " & BINS
+    f = FreeFile
+    Open p For Binary Access Read As #f
+    Get #f, , fr
+    Close #f
+    If fr.magic <> &H58445231 Then
+        SetVal "err_cell", "BAD MAGIC: " & Hex(fr.magic)
         Exit Sub
     End If
-    tStart = Timer
-    seq = m_frameSeq + 1
-    m_frameSeq = seq
+    If fr.sequence = m_lastSeq Then Exit Sub   ' no new frame
+    m_lastSeq = fr.sequence
+    m_frameSeq = fr.sequence
+    m_peakIdx = fr.peak_idx
+    m_peakVal = fr.peak_val
     m_paintCount = m_paintCount + 1
-    ' Shift ring down one row; new frame becomes the top row.
-    Dim j As Long
+    ' shift ring down one row; new frame becomes the top row
+    Dim i As Long, j As Long
     For j = ROWS - 1 To 1 Step -1
-        For i = 0 To BINS - 1
+        For i = 0 To bins - 1
             m_ring(i, j) = m_ring(i, j - 1)
         Next i
     Next j
-    For i = 0 To BINS - 1
-        m_ring(i, 0) = CDbl(parts(i))
+    Dim tStart As Double
+    tStart = Timer
+    For i = 0 To bins - 1
+        m_ring(i, 0) = fr.bins(i)
     Next i
     PaintWaterfall m_ring, ROWS
-    Dim dt As Double
-    dt = (Timer - tStart) * 1000#
-    m_lastPaintMs = dt
+    m_lastPaintMs = (Timer - tStart) * 1000#
+    ' rolling render-time window
     If m_paintCount <= FPS_AVG_N Then
-        If m_paintCount = 1 Then
-            ReDim m_diagWindow(0 To FPS_AVG_N - 1)
-        End If
-        m_diagWindow(m_paintCount - 1) = dt
+        If m_paintCount = 1 Then ReDim m_diagWindow(0 To FPS_AVG_N - 1)
+        m_diagWindow(m_paintCount - 1) = m_lastPaintMs
     Else
-        ' keep a small rolling average via shift
         Dim k As Long
         For k = 0 To FPS_AVG_N - 2
             m_diagWindow(k) = m_diagWindow(k + 1)
         Next k
-        m_diagWindow(FPS_AVG_N - 1) = dt
+        m_diagWindow(FPS_AVG_N - 1) = m_lastPaintMs
     End If
     UpdateDiag
     Exit Sub
@@ -295,6 +304,7 @@ Public Sub UpdateDiag()
     SetVal "seq_cell", seq
     SetVal "render_ms_cell", Format(AvgRenderMs(), "0.00")
     SetVal "paints_cell", m_paintCount
+    SetVal "peak_cell", m_peakIdx & " (" & Format(m_peakVal, "0.00") & ")"
     If m_running Then SetVal "status_cell", "RUNNING" Else SetVal "status_cell", "IDLE"
     On Error GoTo 0
 End Sub
@@ -305,7 +315,7 @@ End Sub
 Public Sub StartLoop()
     If m_running Then Exit Sub
     m_running = True
-    m_lastLine = ""
+    m_lastSeq = 0
     m_rateCount = 0: m_rateStart = 0: m_fpsRate = 0
     Call EnsureRing
     SetVal "err_cell", ""
@@ -317,7 +327,7 @@ Public Sub StartLoop()
     Do While m_running
         If UCase(Trim(CStr(GetVal("stop_flag") & ""))) = "STOP" Then Exit Do
         If Timer >= tNext Then
-            Call ReadCSV
+            Call ReadFrame
             refreshMs = RefreshInterval()
             tNext = Timer + refreshMs / 1000#
         Else
@@ -351,7 +361,7 @@ Public Sub StepOnce()
     On Error GoTo EH
     SetVal "err_cell", ""
     Call EnsureRing
-    Call ReadCSV
+    Call ReadFrame
     SetVal "status_cell", "STEP OK"
     Exit Sub
 EH:
@@ -363,10 +373,10 @@ Public Sub TestPaint()
     ' Paint a gradient test frame so you can see the ramp without Python.
     Dim arr() As Double
     Dim i As Long, j As Long
-    ReDim arr(0 To BINS - 1, 0 To ROWS - 1)
+    ReDim arr(0 To bins - 1, 0 To ROWS - 1)
     For j = 0 To ROWS - 1
-        For i = 0 To BINS - 1
-            arr(i, j) = (i + j * 0.5) / (BINS + ROWS * 0.5)
+        For i = 0 To bins - 1
+            arr(i, j) = (i + j * 0.5) / (bins + ROWS * 0.5)
         Next i
     Next j
     PaintWaterfall arr, ROWS
@@ -386,7 +396,7 @@ Public Sub HardReset()
     On Error Resume Next
     Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + bins - 1))
     r.Clear
     On Error GoTo 0
 End Sub

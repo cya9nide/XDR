@@ -74,7 +74,9 @@ def test_cmd_bad_magic_zeros(tmp_path: Path):
     p = tmp_path / "cmd.bin"
     p.write_bytes(b"\x00" * 16)
     c = read_cmd(p)
-    assert (c.freq_hz, c.sample_rate, c.gain_x10, c.refresh_ms) == (0, 0, 0, 0)
+    # sanitize clamps refresh <30 → 250; the rest stay 0
+    assert (c.freq_hz, c.sample_rate, c.gain_x10) == (0, 0, 0)
+    assert c.refresh_ms == 250
 
 
 def test_clear_cmd(tmp_path: Path):
@@ -82,4 +84,5 @@ def test_clear_cmd(tmp_path: Path):
     write_cmd(p, Cmd(freq_hz=100_000_000))
     clear_cmd(p)
     c = read_cmd(p)
-    assert (c.freq_hz, c.sample_rate, c.gain_x10, c.refresh_ms) == (0, 0, 0, 0)
+    assert (c.freq_hz, c.sample_rate, c.gain_x10) == (0, 0, 0)
+    assert c.refresh_ms == 250

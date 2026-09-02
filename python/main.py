@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from xdr.protocol import FLAG_SR_VALID, Frame, write_frame
+from xdr.protocol import FLAG_LIVE, FLAG_SR_VALID, Frame, write_frame
 
 APP_TITLE = "Excel Defined Radio"
 
@@ -92,32 +92,41 @@ def run_fake_csv(duration: float, per_frame: float) -> None:
 
 
 def run_live_fft(source: Path, per_frame: float) -> None:
-    """Phase 2: read IQ file, FFT, write frames. (Scaffold — filled next phase.)"""
+    """Phase 2: read IQ file, FFT sliding windows, write binary frames in a loop."""
     out = DATA_DIR / "frames.bin"
     out.parent.mkdir(exist_ok=True)
     if not source.is_file():
         raise SystemExit(f"[xdr] live-fft requires an IQ file: {source}")
-    iq = np.fromfile(source, dtype=np.complex64)[: 1 << 20]
+    iq = np.fromfile(source, dtype=np.complex64)
     if iq.size < 2:
         raise SystemExit(f"[xdr] IQ file too small or unreadable: {source}")
-    print(f"[xdr] live-fft: {iq.size} samples from {source}")
+    print(f"[xdr] live-fft: {iq.size:,} complex64 samples from {source} ({iq.size / 2.4e6:.1f}s @ 2.4 MSPS)")
     from xdr.dsp import mag_bins
 
     n = 0
     step = 4096
     pos = 0
-    while True:
-        n += 1
-        chunk = iq[pos : pos + step]
-        if chunk.size < 2:
-            pos = 0
-            continue
-        pos = (pos + step) % iq.size
-        bins = mag_bins(chunk)
-        write_frame(out, Frame(n, bins, sample_rate=2_400_000, flags=FLAG_SR_VALID))
-        if n % 10 == 0:
-            print(f"[xdr] frame {n} peak={bins.max():.2f}")
-        time.sleep(per_frame)
+    t_last = 0.0
+    try:
+        while True:
+            n += 1
+            chunk = iq[pos : pos + step]
+            if chunk.size < 2:
+                pos = 0
+                continue
+            pos = (pos + step) % iq.size  # wrap: loop the file forever
+            bins = mag_bins(chunk)
+            # seq carries the real frame count; timestamp lets Excel measure cadence
+            frm = Frame(n, bins, sample_rate=2_400_000, flags=FLAG_SR_VALID | FLAG_LIVE)
+            write_frame(out, frm)
+            if n % 15 == 0:
+                now = time.perf_counter()
+                fps = 15 / max(1e-9, now - t_last) if t_last else 0
+                t_last = now
+                print(f"[xdr] frame {n} peak={frm.peak_idx}@{frm.peak_val:.2f} ({fps:.1f} fps)")
+            time.sleep(per_frame)
+    except KeyboardInterrupt:
+        print(f"\n[xdr] stopped after {n} frames")
 
 
 def main() -> None:
