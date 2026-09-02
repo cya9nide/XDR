@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import numpy as np
 
 from xdr.backends import SDRNotFoundError, list_devices, open_first
 from xdr.dsp import mag_bins
+from xdr.fm import fm_demod
 from xdr.protocol import FLAG_LIVE, FLAG_SR_VALID, Frame, read_cmd, write_frame
 
 APP_TITLE = "Excel Defined Radio"
@@ -132,7 +134,8 @@ def run_live_fft(source: Path, per_frame: float) -> None:
 
 
 def run_sdr(per_frame: float) -> None:
-    """Phase 3: live SDR — poll cmd.bin for tune config, stream FFT frames."""
+    """Phase 3+5: live SDR — poll cmd.bin for tune, stream FFT frames,
+    and (Phase 5) demodulate the tuned station to audio out."""
     print("[xdr] sdr mode: probing backends...")
     try:
         devs, name = list_devices()
@@ -154,9 +157,27 @@ def run_sdr(per_frame: float) -> None:
     except Exception as e:
         print(f"[xdr] ! initial tune failed ({e}); continuing anyway")
     n = 0
-    step = 4096
+    step = 4096          # FFT frame size
+    audio_chunk = 120_000  # 50 ms IQ per audio emit
     out = DATA_DIR / "frames.bin"
     t_last = 0.0
+    audio_stream = None
+    audio_state: list | None = None   # de-emphasis filter state (across chunks)
+    # phase-5 audio: BLOCKING write (measured best: 98.5%). The vectorized
+    # stateful de-emphasis removes per-chunk compute jitter; blocksize 2048
+    # gives the device headroom. (callback+queue was tried → worse: latency.)
+    try:
+        import sounddevice as sd
+        audio_stream = sd.OutputStream(
+            samplerate=48_000, channels=1, dtype="float32",
+            blocksize=2048,
+        )
+        audio_stream.start()
+        audio_state = [np.zeros(0)]   # vectorized de-emphasis tail state
+        print("[xdr] audio out: sounddevice 48 kHz mono")
+    except Exception as e:
+        print(f"[xdr] ! audio output unavailable ({e}); waterfall only")
+    carrier_hz = 0.0     # station offset from center; set when tuning
     try:
         while True:
             n += 1
@@ -169,7 +190,21 @@ def run_sdr(per_frame: float) -> None:
                     print(f"[xdr] tune -> {freq/1e6:.2f} MHz")
                 except Exception as e:
                     print(f"[xdr] ! tune failed ({e})")
-            iq = dev.read_iq(step)
+            # audio: read a real chunk every frame — the blocking read/write
+            # self-throttles at real-time rate (120k samples @2.4MSPS = 50 ms,
+            # so ~20 blocks/sec = the audio device's own cadence). No sleep
+            # gating → no buffer starvation → no choppiness.
+            if audio_stream is not None:
+                try:
+                    big = dev.read_iq(audio_chunk)
+                    audio = fm_demod(big, sample_rate=sr, carrier_hz=carrier_hz,
+                                     state=audio_state)
+                    if audio.size:
+                        audio_stream.write(audio.astype(np.float32))
+                except Exception as e:
+                    print(f"[xdr] ! audio failed ({e})")
+            # waterfall: FFT a slice of the same chunk (fast, no extra read)
+            iq = big[:step] if audio_stream is not None else dev.read_iq(step)
             bins = mag_bins(iq)
             frm = Frame(n, bins, sample_rate=sr, flags=FLAG_SR_VALID | FLAG_LIVE)
             write_frame(out, frm)
@@ -178,10 +213,19 @@ def run_sdr(per_frame: float) -> None:
                 fps = 15 / max(1e-9, now - t_last) if t_last else 0
                 t_last = now
                 print(f"[xdr] frame {n} peak={frm.peak_idx}@{frm.peak_val:.2f} ({fps:.1f} fps)")
-            time.sleep(per_frame)
+            # no time.sleep: the block read/write IS the pacing for audio;
+            # waterfall rides along. For no-audio mode, gentle sleep keeps fps.
+            if audio_stream is None:
+                time.sleep(per_frame)
     except KeyboardInterrupt:
         print(f"\n[xdr] stopped after {n} frames")
     finally:
+        if audio_stream is not None:
+            try:
+                audio_stream.stop()
+                audio_stream.close()
+            except Exception:
+                pass
         dev.close()
 
 

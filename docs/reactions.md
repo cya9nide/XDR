@@ -8,8 +8,8 @@ The official record of developer reactions, phase by phase.
 | 1 | 2026-09-01 | "Huh. This may actually work." |
 | 2 | 2026-09-01 | "Oh no." |
 | 3 | 2026-09-02 | "It's still working." |
-| 4 | | |
-| 5 | | |
+| 5 | 2026-09-02 | "WHY IS THIS ACTUALLY WORKING" |
+| 4 | | (polish folded into 5) |
 | 6 | | |
 | 7 | | |
 | 8 | | |
