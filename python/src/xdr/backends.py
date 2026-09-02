@@ -13,9 +13,36 @@ Both backends expose the same DroneBackend interface:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+
+
+def _add_rtlsdr_to_path() -> None:
+    """Make bundled native rtlsdr DLLs findable: prepend to PATH, put on
+    sys.path, AND register with os.add_dll_directory() — the modern Windows
+    way ctypes/CDLL honours for dependency resolution. Self-contained; no
+    system installs, no admin."""
+    libs = Path(__file__).resolve().parent.parent.parent / "rtlsdr_libs"
+    if libs.is_dir():
+        libs_str = str(libs)
+        os.environ["PATH"] = libs_str + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory") and libs_str not in getattr(
+            _add_rtlsdr_to_path, "_added", set()
+        ):
+            try:
+                os.add_dll_directory(libs_str)
+                _added = getattr(_add_rtlsdr_to_path, "_added", set())
+                _added.add(libs_str)
+                _add_rtlsdr_to_path._added = _added
+            except Exception:
+                pass
+
+
+# Run once at import time so probe()/list_devices()/open_first() all work.
+_add_rtlsdr_to_path()
 
 
 class SDRNotFoundError(RuntimeError):

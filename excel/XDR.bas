@@ -8,6 +8,9 @@ Const MODULE_TEST As String = "imported-ok"
 Public Const S_DATA_DIR As String = "..\xdr_data\"
 Public Const S_FRAME_FILE As String = "frames.bin"
 Public Const WS_WATERFALL As String = "Waterfall"
+' frame flags (protocol.py)
+Public Const FLAG_SR_VALID As Long = 1
+Public Const FLAG_LIVE As Long = 2
 Public Const bins As Long = 128
 Public Const ROWS As Long = 64
 Public Const FIRST_COL As Long = 2
@@ -246,13 +249,16 @@ End Sub
 Public Sub SDRSheet_Change(ByVal Target As Range)
     On Error GoTo EH
     If Target Is Nothing Then Exit Sub
-    If Target.Count > 1 Then Exit Sub
-    Dim r As Long
-    r = Target.Row
     If Target.Column <> 2 Then Exit Sub
-    Dim v As Variant
-    v = Target.Value
-    Select Case r
+        Dim r As Long
+        r = Target.Row
+        If r < 3 Or r > 6 Then Exit Sub   ' ONLY the control cells (rows 3-6); the
+                                          ' status block lives in col B rows 8+ and
+                                          ' must NOT re-trigger this handler
+        Dim v As Variant
+        v = Target.Value
+        If Not IsNumeric(v) Then Exit Sub
+        Select Case r
         Case 3   ' Frequency (MHz) ? freq_hz (×1e6)
             Call WriteCmd(CLng(CDbl(v) * 1000000#))
         Case 4   ' Sample Rate (MHz) ? sample_rate
@@ -280,6 +286,9 @@ Public Sub ReadFrame()
     p = S_DATA_DIR & S_FRAME_FILE
     If Dir(p) = "" Then
         SetVal "err_cell", "NO FILE: " & p
+        SetVal "connected_cell", "NO"
+        SetVal "srate_cell", "--"
+        SetVal "signal_cell", "--"
         Exit Sub
     End If
     f = FreeFile
@@ -288,6 +297,7 @@ Public Sub ReadFrame()
     Close #f
     If fr.magic <> &H58445231 Then
         SetVal "err_cell", "BAD MAGIC: " & Hex(fr.magic)
+        SetVal "connected_cell", "NO"
         Exit Sub
     End If
     If fr.sequence = m_lastSeq Then Exit Sub   ' no new frame
@@ -295,6 +305,14 @@ Public Sub ReadFrame()
     m_frameSeq = fr.sequence
     m_peakIdx = fr.peak_idx
     m_peakVal = fr.peak_val
+    ' Phase 3 status panel — pull what the frame already carries
+    SetVal "connected_cell", "YES"
+    If (fr.flags And FLAG_SR_VALID) <> 0 Then
+        SetVal "srate_cell", Format(fr.sample_rate / 1000000#, "0.0") & " MSPS"
+    Else
+        SetVal "srate_cell", "--"
+    End If
+    SetVal "signal_cell", Format(m_peakVal, "0.00")
     m_paintCount = m_paintCount + 1
     ' shift ring down one row; new frame becomes the top row
     Dim i As Long, j As Long

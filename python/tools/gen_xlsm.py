@@ -41,6 +41,9 @@ Const MODULE_TEST As String = "imported-ok"
 Public Const S_DATA_DIR As String = "..\xdr_data\"
 Public Const S_FRAME_FILE As String = "frames.bin"
 Public Const WS_WATERFALL As String = "Waterfall"
+' frame flags (protocol.py)
+Public Const FLAG_SR_VALID As Long = 1
+Public Const FLAG_LIVE As Long = 2
 Public Const BINS As Long = 128
 Public Const ROWS As Long = 64
 Public Const FIRST_COL As Long = 2
@@ -279,13 +282,16 @@ End Sub
 Public Sub SDRSheet_Change(ByVal Target As Range)
     On Error GoTo EH
     If Target Is Nothing Then Exit Sub
-    If Target.Count > 1 Then Exit Sub
-    Dim r As Long
-    r = Target.Row
     If Target.Column <> 2 Then Exit Sub
-    Dim v As Variant
-    v = Target.Value
-    Select Case r
+        Dim r As Long
+        r = Target.Row
+        If r < 3 Or r > 6 Then Exit Sub   ' ONLY the control cells (rows 3-6); the
+                                          ' status block lives in col B rows 8+ and
+                                          ' must NOT re-trigger this handler
+        Dim v As Variant
+        v = Target.Value
+        If Not IsNumeric(v) Then Exit Sub
+        Select Case r
         Case 3   ' Frequency (MHz) → freq_hz (×1e6)
             Call WriteCmd(CLng(CDbl(v) * 1000000#))
         Case 4   ' Sample Rate (MHz) → sample_rate
@@ -313,6 +319,9 @@ Public Sub ReadFrame()
     p = S_DATA_DIR & S_FRAME_FILE
     If Dir(p) = "" Then
         SetVal "err_cell", "NO FILE: " & p
+        SetVal "connected_cell", "NO"
+        SetVal "srate_cell", "--"
+        SetVal "signal_cell", "--"
         Exit Sub
     End If
     f = FreeFile
@@ -321,6 +330,7 @@ Public Sub ReadFrame()
     Close #f
     If fr.magic <> &H58445231 Then
         SetVal "err_cell", "BAD MAGIC: " & Hex(fr.magic)
+        SetVal "connected_cell", "NO"
         Exit Sub
     End If
     If fr.sequence = m_lastSeq Then Exit Sub   ' no new frame
@@ -328,6 +338,14 @@ Public Sub ReadFrame()
     m_frameSeq = fr.sequence
     m_peakIdx = fr.peak_idx
     m_peakVal = fr.peak_val
+    ' Phase 3 status panel — pull what the frame already carries
+    SetVal "connected_cell", "YES"
+    If (fr.flags And FLAG_SR_VALID) <> 0 Then
+        SetVal "srate_cell", Format(fr.sample_rate / 1000000#, "0.0") & " MSPS"
+    Else
+        SetVal "srate_cell", "--"
+    End If
+    SetVal "signal_cell", Format(m_peakVal, "0.00")
     m_paintCount = m_paintCount + 1
     ' shift ring down one row; new frame becomes the top row
     Dim i As Long, j As Long
@@ -529,42 +547,42 @@ def main() -> None:
             wb.Names.Add(nm, ws.Cells(r, 2))
             ws.Cells(r, 3).Value = ""  # units column blank for now
             r += 1
-        # status + diagnostics on SDR too
-        ws.Cells(6, 1).Value = "Status"
-        ws.Cells(7, 1).Value = "FPS (paint)"
-        ws.Cells(8, 1).Value = "Frame"
-        ws.Cells(9, 1).Value = "Render (ms)"
-        ws.Cells(10, 1).Value = "Paints"
-        ws.Cells(11, 1).Value = "Last Error"
-        ws.Cells(12, 1).Value = "Stop Flag"
-        ws.Cells(13, 1).Value = "Peak"
-        ws.Cells(6, 2).Value = "IDLE"
-        ws.Cells(7, 2).Value = "--"
-        ws.Cells(8, 2).Value = 0
+        # status + diagnostics on SDR too (rows >= 8; rows 3-6 are the controls)
+        ws.Cells(8, 1).Value = "Status"
+        ws.Cells(9, 1).Value = "FPS (paint)"
+        ws.Cells(10, 1).Value = "Frame"
+        ws.Cells(11, 1).Value = "Render (ms)"
+        ws.Cells(12, 1).Value = "Paints"
+        ws.Cells(13, 1).Value = "Last Error"
+        ws.Cells(14, 1).Value = "Stop Flag"
+        ws.Cells(15, 1).Value = "Peak"
+        ws.Cells(8, 2).Value = "IDLE"
         ws.Cells(9, 2).Value = "--"
         ws.Cells(10, 2).Value = 0
-        ws.Cells(11, 2).Value = ""
-        ws.Cells(12, 2).Value = ""
+        ws.Cells(11, 2).Value = "--"
+        ws.Cells(12, 2).Value = 0
         ws.Cells(13, 2).Value = ""
-        wb.Names.Add("status_cell", ws.Cells(6, 2))
-        wb.Names.Add("fps_cell", ws.Cells(7, 2))
-        wb.Names.Add("seq_cell", ws.Cells(8, 2))
-        wb.Names.Add("render_ms_cell", ws.Cells(9, 2))
-        wb.Names.Add("paints_cell", ws.Cells(10, 2))
-        wb.Names.Add("err_cell", ws.Cells(11, 2))
-        wb.Names.Add("stop_flag", ws.Cells(12, 2))
-        wb.Names.Add("peak_cell", ws.Cells(13, 2))
+        ws.Cells(14, 2).Value = ""
+        ws.Cells(15, 2).Value = ""
+        wb.Names.Add("status_cell", ws.Cells(8, 2))
+        wb.Names.Add("fps_cell", ws.Cells(9, 2))
+        wb.Names.Add("seq_cell", ws.Cells(10, 2))
+        wb.Names.Add("render_ms_cell", ws.Cells(11, 2))
+        wb.Names.Add("paints_cell", ws.Cells(12, 2))
+        wb.Names.Add("err_cell", ws.Cells(13, 2))
+        wb.Names.Add("stop_flag", ws.Cells(14, 2))
+        wb.Names.Add("peak_cell", ws.Cells(15, 2))
 
         # status panel (Phase 3): Connected / Sample Rate / Signal Strength
-        ws.Cells(15, 1).Value = "Connected"
-        ws.Cells(15, 2).Value = "NO"
-        ws.Cells(16, 1).Value = "Sample Rate"
-        ws.Cells(16, 2).Value = "--"
-        ws.Cells(17, 1).Value = "Signal"
-        ws.Cells(17, 2).Value = "--"
-        wb.Names.Add("connected_cell", ws.Cells(15, 2))
-        wb.Names.Add("srate_cell", ws.Cells(16, 2))
-        wb.Names.Add("signal_cell", ws.Cells(17, 2))
+        ws.Cells(17, 1).Value = "Connected"
+        ws.Cells(17, 2).Value = "NO"
+        ws.Cells(18, 1).Value = "Sample Rate"
+        ws.Cells(18, 2).Value = "--"
+        ws.Cells(19, 1).Value = "Signal"
+        ws.Cells(19, 2).Value = "--"
+        wb.Names.Add("connected_cell", ws.Cells(17, 2))
+        wb.Names.Add("srate_cell", ws.Cells(18, 2))
+        wb.Names.Add("signal_cell", ws.Cells(19, 2))
 
         # hook Worksheet_Change event → cmd.bin (controls live in col B rows 3-6)
         # (every sheet has a VBComponent named by its CodeName; add the handler there)

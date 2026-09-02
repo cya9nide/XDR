@@ -45,7 +45,13 @@ uv run python -c "from xdr import backends; print(backends.list_devices())"
 ```
 
 Expect `[SDRDevice(index=0, name='RTL-SDR (pyrtlsdr)', backend='pyrtlsdr')]`.
-If it raises "No SDR backend available", the driver is wrong — redo step 2.
+
+> **Native driver:** `main.py` and `backends.py` automatically prepend
+> `python/rtlsdr_libs/` (bundled x64 `rtlsdr.dll` + deps from the official
+> rtl-sdr-blog Release) to PATH, so pyrtlsdr finds its native lib with **zero
+> system installs**. If you still see "No SDR backend available", the DLLs
+> aren't alongside — re-check `python/rtlsdr_libs/`.
+> If it raises for another reason, the driver is wrong — redo step 2.
 
 Then a 3-second live test:
 
