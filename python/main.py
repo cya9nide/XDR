@@ -126,7 +126,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, default=None, help="IQ file for --mode live")
     parser.add_argument("--wire", choices=["bin", "csv"], default="bin",
                         help="Phase 1 scarecrow (csv) or binary protocol (bin)")
-    parser.add_argument("--fps", type=float, default=4.0, help="frames per second")
+    parser.add_argument("--fps", type=float, default=15.0, help="frames per second")
     parser.add_argument("--duration", type=float, default=0, help="seconds to run (0 = forever)")
     args = parser.parse_args()
     per_frame = 1.0 / args.fps if args.fps > 0 else 1.0

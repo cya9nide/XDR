@@ -53,6 +53,8 @@ Private m_diagWindow() As Double  ' rolling render-time window
 Private m_running As Boolean
 Private m_loopScheduled As Boolean
 Private m_lastLine As String
+Private m_palette(0 To 255) As Long   ' precomputed color ramp lookup
+Private m_paletteInit As Boolean
 
 ' kernel32 sleep for render-loop pacing (32/64-bit safe)
 #If VBA7 Then
@@ -73,6 +75,10 @@ Private Sub EnsureRing()
         ReDim m_diagWindow(0 To FPS_AVG_N - 1)
     End If
     On Error GoTo 0
+    If Not m_paletteInit Then
+        InitPalette
+        m_paletteInit = True
+    End If
 End Sub
 
 ' ── named-range helpers ────────────────────────────────────────────────
@@ -96,35 +102,46 @@ Public Sub SetVal(name As String, v As Variant)
 End Sub
 
 ' ── waterfall core ─────────────────────────────────────────────────────
-' Paints (rows x bins) cells at (firstRow, firstCol).
-' Takes a 2D array (bins, rows) ascol; a later row index = older data.
-Public Sub PaintWaterfall(frameData() As Double, ByVal rowCount As Long)
-    Dim i As Long, j As Long, c As Long
-    Dim r As Range, cell As Range
-    On Error Resume Next
-    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1))
-    r.Clear
+' Bulk paint: build ONE 2D color array (1..rows, 1..bins), assign .Interior.Color in a single COM call.
+Public Sub PaintWaterfallBulk(frameData() As Double, ByVal rowCount As Long)
+    Dim i As Long, j As Long
+    Dim colorBlock() As Long
+    ReDim colorBlock(1 To rowCount, 1 To BINS)
     For j = 0 To rowCount - 1
         For i = 0 To BINS - 1
-            c = ColorFor(frameData(i, j))
-            Set cell = r.Cells(j + 1, i + 1)
-            cell.Interior.Color = c
+            colorBlock(j + 1, i + 1) = ColorFor(frameData(i, j))
         Next i
     Next j
+    On Error Resume Next
+    ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1)).Interior.Color = colorBlock
     On Error GoTo 0
 End Sub
 
-' Maps a 0..1 magnitude to a BGR color via the fixed ramp.
+' Maps a 0..1 magnitude to a BGR color via a 256-entry precomputed ramp.
+Public Sub InitPalette()
+    Dim i As Long
+    For i = 0 To 255
+        m_palette(i) = ColorForRamp(i / 255#)
+    Next i
+End Sub
+
 Public Function ColorFor(m As Double) As Long
-    If m <= 0# Then ColorFor = GetRampColor(0): Exit Function
-    If m >= 1# Then ColorFor = GetRampColor(7): Exit Function
+    If m <= 0# Then ColorFor = m_palette(0): Exit Function
+    If m >= 1# Then ColorFor = m_palette(255): Exit Function
+    ColorFor = m_palette(Int(m * 255#))
+End Function
+
+' Direct ramp (no palette), used by palette init itself.
+Public Function ColorForRamp(m As Double) As Long
+    If m <= 0# Then ColorForRamp = GetRampColor(0): Exit Function
+    If m >= 1# Then ColorForRamp = GetRampColor(7): Exit Function
     Dim pos As Double
     Dim lo As Long, hi As Long, t As Double
     pos = m * 6#
     lo = Int(pos): hi = lo + 1: t = pos - lo
-    ColorFor = BlendColor(GetRampColor(lo), GetRampColor(hi), t)
+    ColorForRamp = BlendColor(GetRampColor(lo), GetRampColor(hi), t)
 End Function
 
 Private Function GetRampColor(idx As Long) As Long
@@ -194,7 +211,7 @@ Public Sub ReadCSV()
     For i = 0 To BINS - 1
         m_ring(i, 0) = CDbl(parts(i))
     Next i
-    PaintWaterfall m_ring, ROWS
+    PaintWaterfallBulk m_ring, ROWS
     Dim dt As Double
     dt = (Timer - tStart) * 1000#
     m_lastPaintMs = dt
@@ -313,7 +330,7 @@ Public Sub TestPaint()
             arr(i, j) = (i + j * 0.5) / (BINS + ROWS * 0.5)
         Next i
     Next j
-    PaintWaterfall arr, ROWS
+    PaintWaterfallBulk arr, ROWS
 End Sub
 
 Public Sub HardReset()
@@ -341,6 +358,7 @@ Public Sub InitDisplay()
     SetVal "paints_cell", 0
     SetVal "seq_cell", 0
     SetVal "render_ms_cell", "--"
+    Call EnsureRing
 End Sub
 """
 
