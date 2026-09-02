@@ -17,8 +17,9 @@ from pathlib import Path
 import numpy as np
 
 FS = 2_400_000          # sample rate (Hz) — RTL-SDR-ish
-CARRIER_HZ = 200_000    # offset from DC (baseband center)
-DEVIATION = 50_000      # FM deviation (Hz per unit message)
+SWEEP_AMP = 600_000     # carrier sweeps ±600 kHz (sinusoidal, 4s period)
+SWEEP_PERIOD = 4.0      # full sweep cycle (seconds) — ~1 arc visible in 64-row history
+DEVIATION = 120_000     # FM deviation (Hz per unit message) — visible wobble
 NOISE = 0.02            # AWGN amplitude
 
 # "music": (freq Hz, duration s) — a cheerful little arpeggio
@@ -46,8 +47,12 @@ def synth_fm_iq(duration: float = 0.5, fs: int = FS, seed: int = 0xC0FFEE) -> np
         msg[cursor : cursor + ln] += 0.8 * np.sin(2 * np.pi * freq * t[cursor : cursor + ln]) * env
         cursor += ln
 
-    # FM modulate the carrier (phase = 2π fc t + kf ∫m dt)
-    phase = 2 * np.pi * CARRIER_HZ * t + DEVIATION * np.cumsum(msg) / fs
+    # FM modulate a SWEEPING carrier, so the waterfall shows visible motion:
+    #   fc(t) = SWEEP_AMP * sin(2π t / SWEEP_PERIOD)  (glides across the band)
+    #   phase_sweep = ∫ 2π fc dt = -SWEEP_AMP * SWEEP_PERIOD * cos(2π t / SWEEP_PERIOD)
+    phase_sweep = -SWEEP_AMP * SWEEP_PERIOD * np.cos(2 * np.pi * t / SWEEP_PERIOD)
+    phase_msg = DEVIATION * np.cumsum(msg) / fs
+    phase = phase_sweep + phase_msg
     iq = np.exp(1j * phase).astype(np.complex64)
 
     # AWGN floor
