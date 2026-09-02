@@ -15,7 +15,7 @@ GRAY = 0x808080        # mid gray
 # (label, value, target named range) → control cells on the SDR sheet
 CONTROLS = [
     ("Frequency (MHz)", 100.0, "freq_mhz"),
-    ("Refresh (ms)", 250, "refresh_ms"),
+    ("Refresh (ms)", 66, "refresh_ms"),
 ]
 
 # Waterfall color ramp: low → high (BGR). 8 stops.
@@ -55,6 +55,10 @@ Private m_loopScheduled As Boolean
 Private m_lastLine As String
 Private m_palette(0 To 255) As Long   ' precomputed color ramp lookup
 Private m_paletteInit As Boolean
+Private m_cfReady As Boolean          ' region has a 3-color-scale CF rule
+Private m_rateCount As Long           ' rolling fps meter
+Private m_rateStart As Double
+Private m_fpsRate As Double
 
 ' kernel32 sleep for render-loop pacing (32/64-bit safe)
 #If VBA7 Then
@@ -79,6 +83,9 @@ Private Sub EnsureRing()
         InitPalette
         m_paletteInit = True
     End If
+    If Not m_cfReady Then
+        EnsureCF
+    End If
 End Sub
 
 ' ── named-range helpers ────────────────────────────────────────────────
@@ -102,21 +109,79 @@ Public Sub SetVal(name As String, v As Variant)
 End Sub
 
 ' ── waterfall core ─────────────────────────────────────────────────────
-' Bulk paint: build ONE 2D color array (1..rows, 1..bins), assign .Interior.Color in a single COM call.
-Public Sub PaintWaterfallBulk(frameData() As Double, ByVal rowCount As Long)
+Public Sub PaintWaterfall(frameData() As Double, ByVal rowCount As Long)
+    On Error GoTo EH
+    Call PaintWaterfallCF(frameData, rowCount)
+    Exit Sub
+EH:
+    ' CF path failed — fall back to the proven per-cell loop
+    On Error Resume Next
+    SetVal "err_cell", "CF paint failed (" & Err.Number & "); using per-cell"
+    On Error GoTo 0
+    PaintWaterfallCells frameData, rowCount
+End Sub
+
+' CF render: write raw values (one COM array write, universally supported) and
+' let a 3-color-scale conditional format color the cells natively. Fastest
+' reliable path; Excel's own render engine does the coloring.
+Public Sub EnsureCF()
+    If m_cfReady Then Exit Sub
+    Dim r As Range
+    On Error Resume Next
+    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+    r.FormatConditions.Delete
+    With r.FormatConditions.AddColorScale(ColorScaleType:=3)
+        .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
+        .ColorScaleCriteria(1).FormatColor.Color = &H0&            ' black (BGR)
+        .ColorScaleCriteria(2).Type = xlConditionValuePercentile
+        .ColorScaleCriteria(2).Value = 50
+        .ColorScaleCriteria(2).FormatColor.Color = &HC80000&       ' red-ish
+        .ColorScaleCriteria(3).Type = xlConditionValueHighestValue
+        .ColorScaleCriteria(3).FormatColor.Color = &HC8C8C8&       ' white-ish
+    End With
+    m_cfReady = True
+    On Error GoTo 0
+End Sub
+
+Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
+    Dim vals() As Double
     Dim i As Long, j As Long
-    Dim colorBlock() As Long
-    ReDim colorBlock(1 To rowCount, 1 To BINS)
+    Dim flush As Boolean
+    ReDim vals(1 To rowCount, 1 To BINS)
     For j = 0 To rowCount - 1
         For i = 0 To BINS - 1
-            colorBlock(j + 1, i + 1) = ColorFor(frameData(i, j))
+            vals(j + 1, i + 1) = frameData(i, j)
         Next i
     Next j
     On Error Resume Next
+    ' write raw values in one array call
     ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
         ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1)).Interior.Color = colorBlock
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1)).Value = vals
+    ' flip calc state to force CF re-eval visually
+    If Application.Calculation = xlCalculationManual Then
+        Application.Calculate
+        flush = True
+    End If
     On Error GoTo 0
+    If flush Then Application.Calculation = xlCalculationManual
+    SetVal "err_cell", ""
+End Sub
+
+' Per-cell fallback (proven in Phase 1) — slow, always works.
+Public Sub PaintWaterfallCells(frameData() As Double, ByVal rowCount As Long)
+    Dim i As Long, j As Long
+    Dim r As Range
+    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + rowCount - 1, FIRST_COL + BINS - 1))
+    For j = 0 To rowCount - 1
+        For i = 0 To BINS - 1
+            r.Cells(j + 1, i + 1).Interior.Color = ColorFor(frameData(i, j))
+        Next i
+    Next j
 End Sub
 
 ' Maps a 0..1 magnitude to a BGR color via a 256-entry precomputed ramp.
@@ -211,7 +276,7 @@ Public Sub ReadCSV()
     For i = 0 To BINS - 1
         m_ring(i, 0) = CDbl(parts(i))
     Next i
-    PaintWaterfallBulk m_ring, ROWS
+    PaintWaterfall m_ring, ROWS
     Dim dt As Double
     dt = (Timer - tStart) * 1000#
     m_lastPaintMs = dt
@@ -244,16 +309,20 @@ Public Function AvgRenderMs() As Double
 End Function
 
 Public Sub UpdateDiag()
-    Dim fps As Double
     Dim seq As Long
     On Error Resume Next
     seq = m_frameSeq
-    If m_lastPaintMs > 0 Then
-        fps = 1000# / m_lastPaintMs
-    Else
-        fps = 0
+    ' true throughput: count paints over a rolling ~1s window
+    If m_rateStart = 0 Then m_rateStart = Timer
+    m_rateCount = m_rateCount + 1
+    Dim dtW As Double
+    dtW = Timer - m_rateStart
+    If dtW >= 1 Then
+        m_fpsRate = m_rateCount / dtW
+        m_rateStart = Timer
+        m_rateCount = 0
     End If
-    SetVal "fps_cell", Format(fps, "0.0")
+    SetVal "fps_cell", Format(m_fpsRate, "0.0")
     SetVal "seq_cell", seq
     SetVal "render_ms_cell", Format(AvgRenderMs(), "0.00")
     SetVal "paints_cell", m_paintCount
@@ -268,6 +337,7 @@ Public Sub StartLoop()
     If m_running Then Exit Sub
     m_running = True
     m_lastLine = ""
+    m_rateCount = 0: m_rateStart = 0: m_fpsRate = 0
     Call EnsureRing
     SetVal "err_cell", ""
     SetVal "stop_flag", ""
@@ -330,7 +400,7 @@ Public Sub TestPaint()
             arr(i, j) = (i + j * 0.5) / (BINS + ROWS * 0.5)
         Next i
     Next j
-    PaintWaterfallBulk arr, ROWS
+    PaintWaterfall arr, ROWS
 End Sub
 
 Public Sub HardReset()
@@ -432,8 +502,8 @@ def main() -> None:
         # ── Settings sheet ──
         st = wb.Worksheets("Settings")
         st.Range("A1").Value = "Refresh (ms)"
-        st.Range("B1").Value = 250
-        st.Range("C1").Value = "100-1000"
+        st.Range("B1").Value = 66
+        st.Range("C1").Value = "30-1000"
         st.Range("A2").Value = "Theme"
         st.Range("B2").Value = "Classic"
         st.Range("C2").Value = "Classic | Vapor | Mono"
