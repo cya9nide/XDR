@@ -218,6 +218,56 @@ Public Function BlendColor(a As Long, b As Long, t As Double) As Long
         b1 + (b2 - b1) * t)
 End Function
 
+' -- cmd.bin writer (Excel ? Python control) ---------------------------
+' Writes the 16-byte XDRCMD record: freq_hz u32, sample_rate u32, gain_x10 u32, refresh_ms u32.
+' Called from SDR sheet Worksheet_Change; also callable as XDRMain.WriteCmd 0,0,0,0 to clear.
+Public Sub WriteCmd(Optional freqHz As Long = 0, Optional srHz As Long = 0, _
+                    Optional gainX10 As Long = 0, Optional refreshMs As Long = 0)
+    On Error GoTo EH
+    Dim f As Integer
+    f = FreeFile
+    Open S_DATA_DIR & "cmd.bin" For Binary Access Write As #f
+    Dim b(1 To 16) As Byte
+    Dim v As Long
+    v = freqHz:   b(1) = v And &HFF: b(2) = (v \ &H100) And &HFF: b(3) = (v \ &H10000) And &HFF: b(4) = (v \ &H1000000) And &HFF
+    v = srHz:     b(5) = v And &HFF: b(6) = (v \ &H100) And &HFF: b(7) = (v \ &H10000) And &HFF: b(8) = (v \ &H1000000) And &HFF
+    v = gainX10:  b(9) = v And &HFF: b(10) = (v \ &H100) And &HFF: b(11) = (v \ &H10000) And &HFF: b(12) = (v \ &H1000000) And &HFF
+    v = refreshMs: b(13) = v And &HFF: b(14) = (v \ &H100) And &HFF: b(15) = (v \ &H10000) And &HFF: b(16) = (v \ &H1000000) And &HFF
+    Put #f, , b
+    Close #f
+    Exit Sub
+EH:
+    On Error Resume Next
+    Close #f
+    SetVal "err_cell", "WriteCmd: " & Err.Number & " " & Err.Description
+End Sub
+
+' -- SDR sheet Worksheet_Change: any control edit ? cmd.bin -------------
+Public Sub SDRSheet_Change(ByVal Target As Range)
+    On Error GoTo EH
+    If Target Is Nothing Then Exit Sub
+    If Target.Count > 1 Then Exit Sub
+    Dim r As Long
+    r = Target.Row
+    If Target.Column <> 2 Then Exit Sub
+    Dim v As Variant
+    v = Target.Value
+    Select Case r
+        Case 3   ' Frequency (MHz) ? freq_hz (×1e6)
+            Call WriteCmd(CLng(CDbl(v) * 1000000#))
+        Case 4   ' Sample Rate (MHz) ? sample_rate
+            Call WriteCmd(0, CLng(CDbl(v) * 1000000#))
+        Case 5   ' Gain (dB) ? gain_x10
+            Call WriteCmd(0, 0, CLng(CDbl(v) * 10))
+        Case 6   ' Refresh (ms) ? refresh_ms
+            Call WriteCmd(0, 0, 0, CLng(v))
+        Case Else
+            Exit Sub
+    End Select
+    Exit Sub
+EH:
+    SetVal "err_cell", "Change: " & Err.Number & " " & Err.Description
+End Sub
 ' -- binary reader (Phase 2) --------------------------------------------
 ' Reads the latest frames.bin record via native Get (aligned UDT), dedupes by
 ' sequence, pushes into the ring, and paints via CF.

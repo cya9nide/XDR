@@ -338,6 +338,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyrtlsdr"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/bf/60c6c077f52c91ab7df051b456096cb158c190dc5ea452cb6a2c9824b06f/pyrtlsdr-0.5.0.tar.gz", hash = "sha256:23d11ebd1b680b3e6a2a926b73de4ffe872cb1ffed8701f257cd1c46d1a840ac", size = 37969, upload-time = "2026-07-05T19:23:50.648Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/de/c1b4b02fa26a2b1fd0559f817be9833de0c77ed213139670b425e827066f/pyrtlsdr-0.5.0-py3-none-any.whl", hash = "sha256:0122da6e930d3f0593914864cf580923e3132d90aeba1f73a651a571c227f5d8", size = 31649, upload-time = "2026-07-05T19:23:49.653Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -399,6 +408,7 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "openpyxl" },
+    { name = "pyrtlsdr" },
     { name = "pytest" },
     { name = "pywin32" },
     { name = "sounddevice" },
@@ -408,6 +418,7 @@ dependencies = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pyrtlsdr", specifier = ">=0.5.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pywin32", specifier = ">=312" },
     { name = "sounddevice", specifier = ">=0.5.6" },

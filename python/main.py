@@ -13,7 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
-from xdr.protocol import FLAG_LIVE, FLAG_SR_VALID, Frame, write_frame
+from xdr.backends import SDRNotFoundError, list_devices, open_first
+from xdr.dsp import mag_bins
+from xdr.protocol import FLAG_LIVE, FLAG_SR_VALID, Frame, read_cmd, write_frame
 
 APP_TITLE = "Excel Defined Radio"
 
@@ -129,9 +131,63 @@ def run_live_fft(source: Path, per_frame: float) -> None:
         print(f"\n[xdr] stopped after {n} frames")
 
 
+def run_sdr(per_frame: float) -> None:
+    """Phase 3: live SDR — poll cmd.bin for tune config, stream FFT frames."""
+    print("[xdr] sdr mode: probing backends...")
+    try:
+        devs, name = list_devices()
+    except SDRNotFoundError as e:
+        raise SystemExit(f"[xdr] {e}")
+    print(f"[xdr] backend: {name}; devices: {[d.name for d in devs]}")
+    try:
+        dev, name = open_first()
+    except SDRNotFoundError as e:
+        raise SystemExit(f"[xdr] {e}")
+    freq = 88_000_000
+    sr = 2_400_000
+    gain = 20.0
+    try:
+        dev.set_sample_rate(sr)
+        dev.set_gain(gain)
+        dev.set_freq(freq)
+        print(f"[xdr] opened {name}: freq={freq/1e6:.2f} MHz sr={sr/1e6:.2f} MSPS gain={gain:.1f} dB")
+    except Exception as e:
+        print(f"[xdr] ! initial tune failed ({e}); continuing anyway")
+    n = 0
+    step = 4096
+    out = DATA_DIR / "frames.bin"
+    t_last = 0.0
+    try:
+        while True:
+            n += 1
+            # poll cmd.bin (Excel controls) — new tune applies next frame
+            cfg = read_cmd(DATA_DIR / "cmd.bin")
+            if cfg is not None and cfg.freq_hz and cfg.freq_hz != freq:
+                freq = cfg.freq_hz
+                try:
+                    dev.set_freq(freq)
+                    print(f"[xdr] tune -> {freq/1e6:.2f} MHz")
+                except Exception as e:
+                    print(f"[xdr] ! tune failed ({e})")
+            iq = dev.read_iq(step)
+            bins = mag_bins(iq)
+            frm = Frame(n, bins, sample_rate=sr, flags=FLAG_SR_VALID | FLAG_LIVE)
+            write_frame(out, frm)
+            if n % 15 == 0:
+                now = time.perf_counter()
+                fps = 15 / max(1e-9, now - t_last) if t_last else 0
+                t_last = now
+                print(f"[xdr] frame {n} peak={frm.peak_idx}@{frm.peak_val:.2f} ({fps:.1f} fps)")
+            time.sleep(per_frame)
+    except KeyboardInterrupt:
+        print(f"\n[xdr] stopped after {n} frames")
+    finally:
+        dev.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=APP_TITLE)
-    parser.add_argument("--mode", choices=["fake", "live"], default="fake")
+    parser.add_argument("--mode", choices=["fake", "live", "sdr"], default="fake")
     parser.add_argument("--source", type=Path, default=None, help="IQ file for --mode live")
     parser.add_argument("--wire", choices=["bin", "csv"], default="bin",
                         help="Phase 1 scarecrow (csv) or binary protocol (bin)")
@@ -148,6 +204,8 @@ def main() -> None:
             run_fake_csv(args.duration, per_frame)
         else:
             run_fake(args.duration, per_frame)
+    elif args.mode == "sdr":
+        run_sdr(per_frame)
     else:
         src = args.source or (Path(__file__).resolve().parent.parent / "samples" / "demo.iq")
         run_live_fft(src, per_frame)
