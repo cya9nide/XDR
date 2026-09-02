@@ -74,7 +74,16 @@ def run_fake_csv(duration: float, per_frame: float) -> None:
         line = ",".join(f"{b:.4f}" for b in bins)
         tmp = out.with_suffix(".tmp")
         tmp.write_text(line)
-        tmp.replace(out)
+        # Windows: the target may be briefly locked (Excel FSO read, Defender scan).
+        # Retry a short backoff; worst case a frame is skipped, never a crash.
+        for _attempt in range(50):
+            try:
+                tmp.replace(out)
+                break
+            except PermissionError:
+                time.sleep(0.01)
+        else:
+            out.write_text(line)  # final fallback: in-place write
         if n % 10 == 0:
             print(f"[xdr] csv frame {n} peak={bins.max():.2f}")
         if deadline and time.perf_counter() >= deadline:

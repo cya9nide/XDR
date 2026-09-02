@@ -303,29 +303,6 @@ EH:
     SetVal "status_cell", "ERROR"
 End Sub
 
-Public Sub StopLoop()
-    m_running = False
-    SetVal "status_cell", "STOPPED"
-End Sub
-
-Private Sub ScheduleTick(delaySec As Double)
-    If Not m_running Then Exit Sub
-    m_loopScheduled = True
-    Application.OnTime Now + delaySec, "XDRMain.Tick", Schedule:=True
-End Sub
-
-Public Sub Tick()
-    m_loopScheduled = False
-    If Not m_running Then Exit Sub
-    ReadCSV
-    Dim refreshMs As Double
-    refreshMs = Val(GetVal("refresh_ms") & "")
-    If refreshMs < 50 Then refreshMs = 250
-    Dim delaySec As Double
-    delaySec = refreshMs / 1000#
-    Call ScheduleTick(delaySec)
-End Sub
-
 Public Sub TestPaint()
     ' Paint a gradient test frame so you can see the ramp without Python.
     Dim arr() As Double

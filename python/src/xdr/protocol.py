@@ -100,11 +100,24 @@ def read_frame(path) -> Frame | None:
 
 
 def write_frame(path, frame: Frame) -> None:
-    """Atomically write one frame to frames.bin (temp + rename)."""
+    """Atomically write one frame to frames.bin (temp + rename).
+
+    Windows: the target may be briefly locked (a concurrent reader or AV scan).
+    Retry with a short backoff rather than crashing.
+    """
+    import time as _time
+
     p = Path(path)
     tmp = p.with_suffix(".tmp")
     tmp.write_bytes(frame.pack())
-    tmp.replace(p)
+    for _attempt in range(50):
+        try:
+            tmp.replace(p)
+            return
+        except PermissionError:
+            _time.sleep(0.01)
+    # last resort: direct overwrite (reader may catch a partial frame; guarded upstream)
+    p.write_bytes(frame.pack())
 
 
 # ── cmd.bin —──────────────────────────────────────────────────────────────
