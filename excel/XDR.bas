@@ -21,6 +21,28 @@ Private m_paintCount As Long
 Private m_diagWindow() As Double  ' rolling render-time window
 Private m_running As Boolean
 Private m_loopScheduled As Boolean
+Private m_lastLine As String
+
+' kernel32 sleep for render-loop pacing (32/64-bit safe)
+#If VBA7 Then
+Public Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+#Else
+Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+#End If
+
+' -- ring lifecycle -----------------------------------------------------
+' Lazy-init so ReadCSV / StepOnce / StartLoop all work without ordering tricks.
+Private Sub EnsureRing()
+    On Error Resume Next
+    Dim x As Long
+    x = UBound(m_ring, 1)
+    If Err.Number <> 0 Then
+        Err.Clear
+        ReDim m_ring(0 To BINS - 1, 0 To ROWS - 1)
+        ReDim m_diagWindow(0 To FPS_AVG_N - 1)
+    End If
+    On Error GoTo 0
+End Sub
 
 ' -- named-range helpers ------------------------------------------------
 Public Function GetRange(name As String) As Range
@@ -102,6 +124,8 @@ End Function
 ' -- CSV reader (Phase 1 scarecrow) -------------------------------------
 ' Overwrite-in-place: read once per frame, parse, push latest into ring.
 Public Sub ReadCSV()
+    On Error GoTo EH
+    EnsureRing
     Dim p As String
     Dim fso As Object, ts As Object
     Dim line As String
@@ -109,13 +133,22 @@ Public Sub ReadCSV()
     Dim i As Long, seq As Long
     Dim tStart As Double
     p = S_DATA_DIR & S_FRAME_FILE
-    If Dir(p) = "" Then Exit Sub
+    If Dir(p) = "" Then
+        SetVal "err_cell", "NO FILE: " & p
+        Exit Sub
+    End If
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set ts = fso.OpenTextFile(p, 1)  ' ForReading
     line = ts.ReadAll
     ts.Close
+    ' skip if nothing changed since last read (writer hasn't pushed a new frame)
+    If line = m_lastLine Then Exit Sub
+    m_lastLine = line
     parts = Split(line, ",")
-    If UBound(parts) <> BINS - 1 Then Exit Sub
+    If UBound(parts) <> BINS - 1 Then
+        SetVal "err_cell", "COUNT: " & UBound(parts) + 1 & " parts, want " & BINS
+        Exit Sub
+    End If
     tStart = Timer
     seq = m_frameSeq + 1
     m_frameSeq = seq
@@ -148,6 +181,9 @@ Public Sub ReadCSV()
         m_diagWindow(FPS_AVG_N - 1) = dt
     End If
     UpdateDiag
+    Exit Sub
+EH:
+    SetVal "err_cell", Err.Number & ": " & Err.Description
 End Sub
 
 Public Function AvgRenderMs() As Double
@@ -178,15 +214,62 @@ Public Sub UpdateDiag()
 End Sub
 
 ' -- loop control -------------------------------------------------------
+' -- loop control (DoEvents render loop — the cursed while-loop) -------
+' Runs until the user types STOP in the stop_flag cell (SDR B12) or calls StopLoop.
 Public Sub StartLoop()
     If m_running Then Exit Sub
     m_running = True
-    m_loopScheduled = False
-    m_frameSeq = 0: m_paintCount = 0
-    ReDim m_ring(0 To BINS - 1, 0 To ROWS - 1)
-    ReDim m_diagWindow(0 To FPS_AVG_N - 1)
-    SetVal "status_cell", "STARTING"
-    Call ScheduleTick(0.05)
+    m_lastLine = ""
+    Call EnsureRing
+    SetVal "err_cell", ""
+    SetVal "stop_flag", ""
+    SetVal "status_cell", "RUNNING"
+    Dim refreshMs As Double
+    Dim tNext As Double
+    tNext = 0
+    Do While m_running
+        If UCase(Trim(CStr(GetVal("stop_flag") & ""))) = "STOP" Then Exit Do
+        If Timer >= tNext Then
+            Call ReadCSV
+            refreshMs = RefreshInterval()
+            tNext = Timer + refreshMs / 1000#
+        Else
+            Sleep 10
+        End If
+        DoEvents
+    Loop
+    m_running = False
+    SetVal "status_cell", "STOPPED"
+    SetVal "stop_flag", ""
+End Sub
+
+Private Function RefreshInterval() As Double
+    Dim v As Variant
+    v = GetVal("refresh_ms")
+    If IsEmpty(v) Or Val(v) < 50 Then
+        RefreshInterval = 250
+    Else
+        RefreshInterval = Val(v)
+    End If
+End Function
+
+Public Sub StopLoop()
+    m_running = False
+    SetVal "stop_flag", "STOP"
+    SetVal "status_cell", "STOPPING"
+End Sub
+
+Public Sub StepOnce()
+    ' One synchronous read+paint for debugging: reports any error to err_cell.
+    On Error GoTo EH
+    SetVal "err_cell", ""
+    Call EnsureRing
+    Call ReadCSV
+    SetVal "status_cell", "STEP OK"
+    Exit Sub
+EH:
+    SetVal "err_cell", Err.Number & ": " & Err.Description
+    SetVal "status_cell", "ERROR"
 End Sub
 
 Public Sub StopLoop()
