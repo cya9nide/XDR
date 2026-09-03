@@ -79,12 +79,26 @@ Private m_cfReady As Boolean          ' region has a 3-color-scale CF rule
 Private m_rateCount As Long           ' rolling fps meter
 Private m_rateStart As Double
 Private m_fpsRate As Double
+Private m_startPump As Boolean        ' heartbeat says "keep the pump going"
 
 ' kernel32 sleep for render-loop pacing (32/64-bit safe)
 #If VBA7 Then
 Public Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
 #Else
 Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+#End If
+
+' Shell for launching the engine headless (Form-button start; no Alt-F11)
+#If VBA7 Then
+Public Declare PtrSafe Function ShellExecuteW Lib "shell32" ( _
+    ByVal hwnd As LongPtr, ByVal lpOperation As String, _
+    ByVal lpFile As String, ByVal lpParameters As String, _
+    ByVal lpDirectory As String, ByVal nShowCmd As Long) As LongPtr
+#Else
+Public Declare Function ShellExecuteW Lib "shell32" ( _
+    ByVal hwnd As Long, ByVal lpOperation As String, _
+    ByVal lpFile As String, ByVal lpParameters As String, _
+    ByVal lpDirectory As String, ByVal nShowCmd As Long) As Long
 #End If
 
 ' ── ring lifecycle ─────────────────────────────────────────────────────
@@ -415,6 +429,7 @@ End Sub
 ' Runs until the user types STOP in the stop_flag cell (SDR B12) or calls StopLoop.
 Public Sub StartLoop()
     If m_running Then Exit Sub
+    m_startPump = True
     m_running = True
     m_lastSeq = 0
     m_rateCount = 0: m_rateStart = 0: m_fpsRate = 0
@@ -437,6 +452,7 @@ Public Sub StartLoop()
         DoEvents
     Loop
     m_running = False
+    m_startPump = False
     SetVal "status_cell", "STOPPED"
     SetVal "stop_flag", ""
 End Sub
@@ -453,8 +469,94 @@ End Function
 
 Public Sub StopLoop()
     m_running = False
+    m_startPump = False
     SetVal "stop_flag", "STOP"
     SetVal "status_cell", "STOPPING"
+End Sub
+
+' Callback used by the heartbeat scheduler. Runs when Excel is idle so a
+' button macro (which called StartLoop) never blocks the UI.
+Public Sub Heartbeat()
+    On Error Resume Next
+    If m_startPump Then Call StartLoop
+End Sub
+
+Public Sub StartEngine()
+    ' Launch the Python SDR engine headless (no console, one click), then
+    ' arm an Idle-time start so the button macro RETURNS and never blocks COM.
+    ' If the engine is already running, skip the launch (dongle is busy).
+    On Error Resume Next
+    Dim pid As Double
+    If EngineRunning() Then
+        SetVal "err_cell", ""
+        SetVal "status_cell", "RUNNING"
+        Call ArmStart
+        Exit Sub
+    End If
+    pid = Shell("C:\Windows\System32\cmd.exe /c cd /d ..\python && uv.exe run python main.py --mode sdr --fps 15 > ..\xdr_data\engine.log 2>&1", vbHide)
+    Err.Clear
+    If pid = 0 Then
+        SetVal "err_cell", "engine launch failed"
+    Else
+        SetVal "err_cell", ""
+        SetVal "status_cell", "LAUNCHED"
+        Call ArmStart
+    End If
+End Sub
+
+' Arm the heartbeat: schedule a one-shot callback at idle (~1s out) so the
+' button/COM call returns promptly. No named arg — OnTime is positional-only.
+Public Sub ArmStart()
+    m_startPump = True
+    Application.OnTime Now + TimeValue("00:00:01"), "XDRMain.Heartbeat"
+End Sub
+
+Public Sub StopEngine()
+    Call StopLoop
+    Call KillEngine
+    SetVal "status_cell", "STOPPED"
+End Sub
+
+' Terminate the XDR engine python process. WMI + command-line filter so we
+' only kill OUR engine (main.py --mode sdr), never unrelated python.
+Private Sub KillEngine()
+    Dim objWMI As Object, colItems As Object, objItem As Object
+    On Error Resume Next
+    Set objWMI = GetObject("winmgmts:\\.\root\cimv2")
+    Set colItems = objWMI.ExecQuery( _
+        "SELECT ProcessID FROM Win32_Process WHERE (Name LIKE 'python%') " & _
+        "AND CommandLine LIKE '%main.py --mode sdr%'")
+    If Not colItems Is Nothing Then
+        For Each objItem In colItems
+            objItem.Terminate
+        Next
+    End If
+    Set objWMI = Nothing
+End Sub
+
+' True if the XDR engine is already running (launch guard).
+Public Function EngineRunning() As Boolean
+    Dim objWMI As Object, colItems As Object, objItem As Object
+    EngineRunning = False
+    On Error Resume Next
+    Set objWMI = GetObject("winmgmts:\\.\root\cimv2")
+    Set colItems = objWMI.ExecQuery( _
+        "SELECT ProcessID FROM Win32_Process WHERE (Name LIKE 'python%') " & _
+        "AND CommandLine LIKE '%main.py --mode sdr%'")
+    If Not colItems Is Nothing Then
+        For Each objItem In colItems
+            EngineRunning = True
+            Exit For
+        Next
+    End If
+    Set objWMI = Nothing
+End Function
+
+Public Sub StepAll()
+    ' One full pump: read one frame + paint, without the loop.
+    Call EnsureRing
+    Call ReadFrame
+    SetVal "status_cell", "STEPPED"
 End Sub
 
 Public Sub StepOnce()
@@ -590,6 +692,39 @@ def main() -> None:
         ws_component.CodeModule.AddFromString(
             "Private Sub Worksheet_Change(ByVal Target As Range)\n"
             "    Call XDRMain.SDRSheet_Change(Target)\n"
+            "End Sub\n"
+        )
+
+        # ── Control buttons (no Alt-F11 needed) ──
+        # Form buttons on the SDR sheet wired via AssignMacro; they're shapes so
+        # they never fire Worksheet_Change. Columns G.. (row ~1).
+        btn_y, btn_h = 10, 24
+        buttons = [
+            ("START ENGINE", "XDRMain.StartEngine", 7, btn_y, 110, btn_h),
+            ("STOP", "XDRMain.StopEngine", 7, btn_y + btn_h + 6, 110, btn_h),
+            ("STEP", "XDRMain.StepAll", 7, btn_y + 2 * (btn_h + 6), 110, btn_h),
+        ]
+        for cap, macro, col, top, w, h in buttons:
+            b = ws.Buttons().Add(ws.Cells(top, col).Left, ws.Cells(top, col).Top, w, h)
+            b.Caption = cap
+            b.OnAction = macro
+            b.Name = cap.replace(" ", "_")
+
+        # ── Auto-start flag (SDR sheet E22; opt-in) ──
+        ws.Cells(22, 5).Value = "Auto-start on open"
+        ws.Cells(22, 6).Value = "FALSE"
+        wb.Names.Add(Name:="auto_start", RefersTo:="=SDR!$F$22")
+
+        # ── Workbook_Open (auto-start; opt-in via auto_start flag) ──
+        # Fires only AFTER the user clicks Enable Content. Safe: calls StartLoop
+        # (the engine must already be running for frames to flow).
+        wb_vb = wb.VBProject.VBComponents(wb.CodeName)  # ThisWorkbook
+        wb_vb.CodeModule.AddFromString(
+            "Private Sub Workbook_Open()\n"
+            "    On Error Resume Next\n"
+            "    If UCase(Trim(CStr(ThisWorkbook.Names(\"auto_start\").RefersToRange.Value))) = \"TRUE\" Then\n"
+            "        Call XDRMain.StartLoop\n"
+            "    End If\n"
             "End Sub\n"
         )
 
