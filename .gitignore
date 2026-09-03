@@ -44,3 +44,7 @@ assets/workstation.png
 assets/xdr-logo.png
 # scratch
 .xdr_tmp*
+
+# local build scripts
+/tools/msg_*.sh
+/tools/msg_list.txt

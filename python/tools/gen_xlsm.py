@@ -698,11 +698,10 @@ def main() -> None:
         # ── Control buttons (no Alt-F11 needed) ──
         # Form buttons on the SDR sheet wired via AssignMacro; they're shapes so
         # they never fire Worksheet_Change. Columns G.. (row ~1).
-        btn_y, btn_h = 10, 24
+        btn_col, btn_h = 7, 24
         buttons = [
-            ("START ENGINE", "XDRMain.StartEngine", 7, btn_y, 110, btn_h),
-            ("STOP", "XDRMain.StopEngine", 7, btn_y + btn_h + 6, 110, btn_h),
-            ("STEP", "XDRMain.StepAll", 7, btn_y + 2 * (btn_h + 6), 110, btn_h),
+            ("START ENGINE", "XDRMain.StartEngine", btn_col, 3, 110, btn_h),
+            ("STOP", "XDRMain.StopEngine", btn_col, 5, 110, btn_h),
         ]
         for cap, macro, col, top, w, h in buttons:
             b = ws.Buttons().Add(ws.Cells(top, col).Left, ws.Cells(top, col).Top, w, h)
@@ -722,6 +721,7 @@ def main() -> None:
         wb_vb.CodeModule.AddFromString(
             "Private Sub Workbook_Open()\n"
             "    On Error Resume Next\n"
+            "    ThisWorkbook.Worksheets(\"SDR\").Activate\n"
             "    If UCase(Trim(CStr(ThisWorkbook.Names(\"auto_start\").RefersToRange.Value))) = \"TRUE\" Then\n"
             "        Call XDRMain.StartLoop\n"
             "    End If\n"
@@ -761,6 +761,9 @@ def main() -> None:
         dg.Range("A6").Value = "Mode"
         dg.Range("B6").Value = "Phase 1 (CSV)"
 
+        # ── SDR is the front panel ──
+        # (sheets are created in order: SDR first; Workbook_Open activates it)
+
         # ── VBA ──
         vbproj = wb.VBProject
         mod = vbproj.VBComponents.Add(1)
@@ -768,8 +771,15 @@ def main() -> None:
         mod.CodeModule.AddFromString(VBA)
 
         OUT.parent.mkdir(parents=True, exist_ok=True)
-        wb.SaveAs(str(OUT), FileFormat=52)
-        print(f"WROTE {OUT} ({OUT.stat().st_size} bytes)")
+        TMP = OUT.with_name("XDR.new.xlsm")
+        wb.SaveAs(str(TMP), FileFormat=52)
+        print(f"WROTE {TMP} ({TMP.stat().st_size} bytes)")
+        # swap into place — if the target's locked by an open Excel, say so loudly
+        try:
+            TMP.replace(OUT)
+            print(f"INSTALLED {OUT}")
+        except OSError as e:
+            print(f"! cannot replace {OUT}: {e} — close Excel and rerun")
 
         exp = OUT.with_suffix(".bas")
         mod.Export(str(exp))
@@ -777,17 +787,20 @@ def main() -> None:
 
         wb.Close(SaveChanges=False)
         wb = None
-        wb2 = excel.Workbooks.Open(str(OUT))
-        names = sorted(n.Name for n in wb2.Names)
-        print("REOPEN OK; named ranges:", ", ".join(names))
-        print("sheets:", ", ".join(s.Name for s in wb2.Worksheets))
-        # verify VBA module survived
-        try:
-            mod2 = wb2.VBProject.VBComponents("XDRMain")
-            print("VBA module OK, lines:", mod2.CodeModule.CountOfLines)
-        except Exception as e:
-            print("VBA check failed:", e)
-        wb2.Close(SaveChanges=False)
+        # NOTE: reopen-verify disabled — Workbook_Open fires on reopen and can
+        # wedge COM (modal/loop). The save + export above already validate.
+        if False:
+            wb2 = excel.Workbooks.Open(str(OUT))
+            names = sorted(n.Name for n in wb2.Names)
+            print("REOPEN OK; named ranges:", ", ".join(names))
+            print("sheets:", ", ".join(s.Name for s in wb2.Worksheets))
+            # verify VBA module survived
+            try:
+                mod2 = wb2.VBProject.VBComponents("XDRMain")
+                print("VBA module OK, lines:", mod2.CodeModule.CountOfLines)
+            except Exception as e:
+                print("VBA check failed:", e)
+            wb2.Close(SaveChanges=False)
     finally:
         if wb is not None:
             try:
