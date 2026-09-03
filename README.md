@@ -34,6 +34,18 @@ A functional software-defined radio where **Excel is the front end and the engin
 5. Click **START ENGINE** → the waterfall comes alive.
 6. Set `B3` to an FM frequency (try 102.9) → audio.
 
+## Bleeding Edge Technology
+
+We don't just push boundaries — we **redefine the definition of them**. This is a stack so advanced it was abandoned by the industry, resurrected by us, and weaponized against common sense.
+
+- **VBA (Visual Basic for Applications)** — the undisputed backbone of enterprise civilization since 1993. We write our signal-processing front end in the same language that powers your finance department's macros. When Excel macros went out of fashion, they went **out of fashion** — we brought them back with a vengeance.
+- **Excel cells as pixels** — why bother with a GPU, a display server, or pixels when you have **conditional formatting**? Our 128×64 waterfall is rendered by the same technology that makes your quarterly reports pop. Each cell is a pixel. Each pixel is a cell. It's the most efficient use of a spreadsheet grid ever devised, and by "efficient" we mean "absurd."
+- **File-piping as IPC** — sockets? Named pipes? Shared memory? **Obsolete.** Our two processes communicate by **writing fixed-layout binary files into a directory and staring at them until they change.** It's the network stack of the future, minus the network. Zero ports open, zero services listening, zero firewall prompts — the enemy can't hack a file that's just sitting there, waiting. It's the ultimate air-gapped communication protocol, brutal in its simplicity and terrifying in its implications.
+- **Python as a dumb peripheral** — a language with numpy, FFT libraries, and a thriving ecosystem, relegated to the job of a **printer driver**: write bytes to a file, repeat forever. It's a peripheral pretending to be a program, and it *knows* it. Somewhere, a software engineer is crying.
+- **No GPU, no FPGA, no DSP accelerator** — who needs a 4090 when you have a 128×64 grid of **RGB-interpolated conditional formatting rules** churning out a live FFT waterfall at 15 frames per second?
+
+This is either the most over-engineered joke in radio history or the most under-engineered miracle. We're not sure either. **You shouldn't be either.**
+
 ## IPC (the cursed part)
 
 Two fixed-layout binary files in a project-local `xdr_data/` dir:
@@ -50,22 +62,13 @@ Two fixed-layout binary files in a project-local `xdr_data/` dir:
 
 ## Gallery
 
-Real hardware, real FM, real cells. (Full image pack: `H:\documents\XDR\assets-review\`)
+Real hardware, real FM, real cells. Full image pack available on request.
 
 - `assets/banner.png` — the banner.
-- *(more images on the shared drive for review)*
 
 ## Roadmap
 
-| Phase | State |
-|---|---|
-| 0–2 | fake SDR → live FFT → waterfall in cells |
-| 3 | real RTL-SDR hardware + Excel tuning + status panel |
-| 4 | polish (frequency scale, gradients) |
-| 5 | **FM demod + live audio** *(the floor)* |
-| 6 | presets, S-meter, scan, themes, favorites, recorder |
-| 7 | cursed optimization (audio jitter, fps/cell/CPU metrics) |
-| 8–10 | airband, ADS-B, release kit |
+Probably nothing.
 
 ## License
 

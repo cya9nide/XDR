@@ -1,10 +1,10 @@
 [project]
 name = "xdr"
 version = "0.1.0"
-description = "Add your description here"
+description = "Excel Defined Radio — a functional SDR whose waterfall is rendered using spreadsheet cells."
 readme = "README.md"
 authors = [
-    { name = "", email = "dev@example.invalid" }
+    { name = "cya9nide" }
 ]
 requires-python = ">=3.11"
 dependencies = [

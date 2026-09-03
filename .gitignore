@@ -31,5 +31,16 @@ docs/screenshots/*.png
 assets/*.mp4
 assets/*.webm
 assets/*.mov
+
+# Review-only images (H:\documents\XDR\assets-review\)
+assets/cells-closeup.png
+assets/demo.png
+assets/dial-in-spreadsheet.png
+assets/radio-vs-excel.png
+assets/rtl-dongle.png
+assets/waterfall-2.png
+assets/waterfall.png
+assets/workstation.png
+assets/xdr-logo.png
 # scratch
 .xdr_tmp*
