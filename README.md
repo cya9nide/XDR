@@ -60,12 +60,6 @@ Two fixed-layout binary files in a project-local `xdr_data/` dir:
 3. Every phase is a shippable joke increment with a testable exit gate.
 4. Keep the receipts — Diagnostics tab from day one.
 
-## Gallery
-
-Real hardware, real FM, real cells. Full image pack available on request.
-
-- `assets/banner.png` — the banner.
-
 ## Roadmap
 
 Probably nothing.
