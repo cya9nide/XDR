@@ -31,3 +31,5 @@ docs/screenshots/*.png
 assets/*.mp4
 assets/*.webm
 assets/*.mov
+# scratch
+.xdr_tmp*

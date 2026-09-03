@@ -8,6 +8,8 @@
 
 **To future engineers:** We're sorry.
 
+![Excel Defined Radio](assets/banner.png)
+
 ---
 
 ## What is this?
@@ -48,12 +50,10 @@ Two fixed-layout binary files in a project-local `xdr_data/` dir:
 
 ## Gallery
 
-Real hardware, real FM, real cells:
+Real hardware, real FM, real cells. (Full image pack: `H:\documents\XDR\assets-review\`)
 
-- `assets/waterfall.png` — the waterfall, alive.
-- `assets/rtl-dongle.png` — the dongle that made it real.
-- `assets/banner.png` — cursed banner.
-- *(more in `assets/`)*
+- `assets/banner.png` — the banner.
+- *(more images on the shared drive for review)*
 
 ## Roadmap
 
