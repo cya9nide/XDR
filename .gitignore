@@ -26,3 +26,8 @@ Thumbs.db
 
 # Docs
 docs/screenshots/*.png
+
+# Media (large; commit only for release)
+assets/*.mp4
+assets/*.webm
+assets/*.mov
