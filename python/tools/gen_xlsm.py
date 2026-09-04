@@ -71,6 +71,7 @@ Private m_diagWindow() As Double  ' rolling render-time window
 Private m_running As Boolean
 Private m_loopScheduled As Boolean
 Private m_lastSeq As Long
+Private m_gapCount As Long                ' skipped-sequence counter (diagnostics)
 Private m_peakIdx As Long
 Private m_peakVal As Single
 Private m_palette(0 To 255) As Long   ' precomputed color ramp lookup
@@ -160,23 +161,7 @@ End Sub
 ' reliable path; Excel's own render engine does the coloring.
 Public Sub EnsureCF()
     If m_cfReady Then Exit Sub
-    Dim r As Range
-    On Error Resume Next
-    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
-        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
-    r.FormatConditions.Delete
-    With r.FormatConditions.AddColorScale(ColorScaleType:=3)
-        .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
-        .ColorScaleCriteria(1).FormatColor.Color = &H0&            ' black (BGR)
-        .ColorScaleCriteria(2).Type = xlConditionValuePercentile
-        .ColorScaleCriteria(2).Value = 50
-        .ColorScaleCriteria(2).FormatColor.Color = &HC80000&       ' red-ish
-        .ColorScaleCriteria(3).Type = xlConditionValueHighestValue
-        .ColorScaleCriteria(3).FormatColor.Color = &HC8C8C8&       ' white-ish
-    End With
-    m_cfReady = True
-    On Error GoTo 0
+    Call ApplyTheme
 End Sub
 
 Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
@@ -321,6 +306,20 @@ Public Sub SDRSheet_Change(ByVal Target As Range)
 EH:
     SetVal "err_cell", "Change: " & Err.Number & " " & Err.Description
 End Sub
+
+' ── Phase 6: preset auto-load ─────────────────────────────────────────
+' Auto-loads the preset when the preset_idx cell (F23) is edited.
+Public Sub PresetIdx_Change(ByVal Target As Range)
+    On Error GoTo EH
+    If Target Is Nothing Then Exit Sub
+    If Target.Column <> 6 Then Exit Sub        ' col F
+    If Target.Row <> 23 Then Exit Sub          ' F23 = preset_idx
+    If Not IsNumeric(Target.Value) Then Exit Sub
+    Call LoadPreset
+    Exit Sub
+EH:
+    SetVal "err_cell", "PresetIdx: " & Err.Number & " " & Err.Description
+End Sub
 ' ── binary reader (Phase 2) ────────────────────────────────────────────
 ' Reads the latest frames.bin record via native Get (aligned UDT), dedupes by
 ' sequence, pushes into the ring, and paints via CF.
@@ -348,6 +347,7 @@ Public Sub ReadFrame()
         Exit Sub
     End If
     If fr.sequence = m_lastSeq Then Exit Sub   ' no new frame
+    If fr.sequence > m_lastSeq + 1 Then m_gapCount = m_gapCount + (fr.sequence - m_lastSeq - 1)
     m_lastSeq = fr.sequence
     m_frameSeq = fr.sequence
     m_peakIdx = fr.peak_idx
@@ -360,6 +360,7 @@ Public Sub ReadFrame()
         SetVal "srate_cell", "--"
     End If
     SetVal "signal_cell", Format(m_peakVal, "0.00")
+    Call UpdateSMeter
     m_paintCount = m_paintCount + 1
     ' shift ring down one row; new frame becomes the top row
     Dim i As Long, j As Long
@@ -392,6 +393,55 @@ EH:
     SetVal "err_cell", Err.Number & ": " & Err.Description
 End Sub
 
+' ── Phase 6: S-meter ─────────────────────────────────────────────────
+' Maps the live peak magnitude (m_peakVal, roughly 0..1.2) onto a 0-10
+' bar of 10 cells (named range smeter_bar) + a numeric cell (smeter_cell).
+' Called from ReadFrame every new frame.
+Public Sub UpdateSMeter()
+    On Error Resume Next
+    Dim lvl As Double
+    lvl = m_peakVal
+    Dim n As Long
+    n = Int((lvl / 1.0#) * 10#)
+    If n < 0 Then n = 0
+    If n > 10 Then n = 10
+    SetVal "smeter_cell", n
+    Dim r As Range, i As Long
+    Set r = ThisWorkbook.Names("smeter_bar").RefersToRange
+    For i = 1 To r.Cells.Count
+        If i <= n Then
+            r.Cells(i).Interior.Color = RGB(120, 200, 80)   ' lit (green)
+        Else
+            r.Cells(i).Interior.Color = RGB(60, 60, 60)     ' unlit (gray)
+        End If
+    Next i
+    On Error GoTo 0
+End Sub
+
+' ── Phase 6: presets ─────────────────────────────────────────────────
+' Loads the preset selected by preset_idx from the named preset_freqs
+' column, pushes it into the Frequency control + cmd.bin, and re-tunes.
+Public Sub LoadPreset()
+    On Error GoTo EH
+    Dim i As Long, f As Variant
+    i = CLng(GetVal("preset_idx"))
+    Dim rng As Range
+    Set rng = ThisWorkbook.Names("preset_freqs").RefersToRange
+    If rng Is Nothing Then Exit Sub
+    If i >= 1 And i <= rng.Rows.Count Then
+        f = rng.Cells(i, 1).Value
+        If IsNumeric(f) And f > 0 Then
+            SetVal "freq_mhz", CDbl(f)
+            Call WriteCmd(CLng(CDbl(f) * 1000000#))
+            SetVal "status_cell", "TUNED " & Format(f, "0.0") & " MHz"
+            SetVal "err_cell", ""
+        End If
+    End If
+    Exit Sub
+EH:
+    SetVal "err_cell", "LoadPreset: " & Err.Number & " " & Err.Description
+End Sub
+
 Public Function AvgRenderMs() As Double
     Dim s As Double, c As Long, k As Long
     s = 0: c = 0
@@ -419,8 +469,85 @@ Public Sub UpdateDiag()
     SetVal "seq_cell", seq
     SetVal "render_ms_cell", Format(AvgRenderMs(), "0.00")
     SetVal "paints_cell", m_paintCount
+    SetVal "frames_read_cell", m_paintCount
+    SetVal "gaps_cell", m_gapCount
     SetVal "peak_cell", m_peakIdx & " (" & Format(m_peakVal, "0.00") & ")"
     If m_running Then SetVal "status_cell", "RUNNING" Else SetVal "status_cell", "IDLE"
+    On Error GoTo 0
+End Sub
+
+' ── Phase 6: themes ───────────────────────────────────────────────────
+' Reads the Theme cell (Settings B2, named theme_cell), clears the region,
+' writes raw values, and re-paints the color scale for the chosen theme.
+Public Sub ApplyTheme()
+    On Error GoTo EH
+    Dim theme As String
+    theme = UCase(Trim(CStr(GetVal("theme_cell"))))
+    If theme = "CLASSIC" Then Call ApplyThemeClassic
+    If theme = "VAPOR" Then Call ApplyThemeVapor
+    If theme = "MONO" Then Call ApplyThemeMono
+    m_cfReady = True
+    Exit Sub
+EH:
+    On Error Resume Next
+    m_cfReady = True
+    SetVal "err_cell", "ApplyTheme: " & Err.Number & " " & Err.Description
+End Sub
+
+Private Sub ApplyThemeClassic()
+    On Error Resume Next
+    Dim r As Range
+    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+    r.FormatConditions.Delete
+    With r.FormatConditions.AddColorScale(ColorScaleType:=3)
+        .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
+        .ColorScaleCriteria(1).FormatColor.Color = &H0&
+        .ColorScaleCriteria(2).Type = xlConditionValuePercentile
+        .ColorScaleCriteria(2).Value = 40
+        .ColorScaleCriteria(2).FormatColor.Color = &HC80000&
+        .ColorScaleCriteria(3).Type = xlConditionValueHighestValue
+        .ColorScaleCriteria(3).FormatColor.Color = &HC8C8C8&
+    End With
+    On Error GoTo 0
+End Sub
+
+Private Sub ApplyThemeVapor()
+    On Error Resume Next
+    Dim r As Range
+    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+    r.FormatConditions.Delete
+    With r.FormatConditions.AddColorScale(ColorScaleType:=3)
+        .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
+        .ColorScaleCriteria(1).FormatColor.Color = &H101020&      ' dark desat purple
+        .ColorScaleCriteria(2).Type = xlConditionValuePercentile
+        .ColorScaleCriteria(2).Value = 45
+        .ColorScaleCriteria(2).FormatColor.Color = &HC03050&       ' magenta/pink
+        .ColorScaleCriteria(3).Type = xlConditionValueHighestValue
+        .ColorScaleCriteria(3).FormatColor.Color = &HFF80FF&       ' near-white pink
+    End With
+    On Error GoTo 0
+End Sub
+
+Private Sub ApplyThemeMono()
+    On Error Resume Next
+    Dim r As Range
+    Set r = ThisWorkbook.Worksheets(WS_WATERFALL).Range( _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW, FIRST_COL), _
+        ThisWorkbook.Worksheets(WS_WATERFALL).Cells(FIRST_ROW + ROWS - 1, FIRST_COL + BINS - 1))
+    r.FormatConditions.Delete
+    With r.FormatConditions.AddColorScale(ColorScaleType:=3)
+        .ColorScaleCriteria(1).Type = xlConditionValueLowestValue
+        .ColorScaleCriteria(1).FormatColor.Color = &H101010&
+        .ColorScaleCriteria(2).Type = xlConditionValuePercentile
+        .ColorScaleCriteria(2).Value = 45
+        .ColorScaleCriteria(2).FormatColor.Color = &H808080&
+        .ColorScaleCriteria(3).Type = xlConditionValueHighestValue
+        .ColorScaleCriteria(3).FormatColor.Color = &HFFFFFF&
+    End With
     On Error GoTo 0
 End Sub
 
@@ -628,10 +755,9 @@ def main() -> None:
         ws_main.Name = "SDR"
         wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count)).Name = "Waterfall"
         wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count)).Name = "Settings"
-        wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count)).Name = "Diagnostics"
 
         # header across sheets
-        for name in ("SDR", "Waterfall", "Settings", "Diagnostics"):
+        for name in ("SDR", "Waterfall", "Settings"):
             ws = wb.Worksheets(name)
             ws.Range("A1").Value = "EXCEL DEFINED RADIO - " + name.upper()
             ws.Range("A1").Font.Bold = True
@@ -675,6 +801,10 @@ def main() -> None:
         wb.Names.Add("stop_flag", ws.Cells(14, 2))
         wb.Names.Add("peak_cell", ws.Cells(15, 2))
 
+        ws.Cells(16, 1).Value = "Frames read"
+        ws.Cells(16, 2).Value = 0
+        wb.Names.Add("frames_read_cell", ws.Cells(16, 2))
+
         # status panel (Phase 3): Connected / Sample Rate / Signal Strength
         ws.Cells(17, 1).Value = "Connected"
         ws.Cells(17, 2).Value = "NO"
@@ -682,9 +812,12 @@ def main() -> None:
         ws.Cells(18, 2).Value = "--"
         ws.Cells(19, 1).Value = "Signal"
         ws.Cells(19, 2).Value = "--"
+        ws.Cells(20, 1).Value = "Frame gaps"
+        ws.Cells(20, 2).Value = 0
         wb.Names.Add("connected_cell", ws.Cells(17, 2))
         wb.Names.Add("srate_cell", ws.Cells(18, 2))
         wb.Names.Add("signal_cell", ws.Cells(19, 2))
+        wb.Names.Add("gaps_cell", ws.Cells(20, 2))
 
         # hook Worksheet_Change event → cmd.bin (controls live in col B rows 3-6)
         # (every sheet has a VBComponent named by its CodeName; add the handler there)
@@ -692,6 +825,7 @@ def main() -> None:
         ws_component.CodeModule.AddFromString(
             "Private Sub Worksheet_Change(ByVal Target As Range)\n"
             "    Call XDRMain.SDRSheet_Change(Target)\n"
+            "    Call XDRMain.PresetIdx_Change(Target)\n"
             "End Sub\n"
         )
 
@@ -702,6 +836,7 @@ def main() -> None:
         buttons = [
             ("START ENGINE", "XDRMain.StartEngine", btn_col, 3, 110, btn_h),
             ("STOP", "XDRMain.StopEngine", btn_col, 5, 110, btn_h),
+            ("LOAD PRESET", "XDRMain.LoadPreset", btn_col, 7, 110, btn_h),
         ]
         for cap, macro, col, top, w, h in buttons:
             b = ws.Buttons().Add(ws.Cells(top, col).Left, ws.Cells(top, col).Top, w, h)
@@ -712,7 +847,26 @@ def main() -> None:
         # ── Auto-start flag (SDR sheet E22; opt-in) ──
         ws.Cells(22, 5).Value = "Auto-start on open"
         ws.Cells(22, 6).Value = "FALSE"
-        wb.Names.Add(Name:="auto_start", RefersTo:="=SDR!$F$22")
+        wb.Names.Add(Name="auto_start", RefersTo="=SDR!$F$22")
+
+        # ── Phase 6: presets + S-meter controls (SDR sheet) ──
+        # Preset list in col H (loaded by LOAD PRESET button). Index in F23.
+        ws.Cells(23, 5).Value = "Preset #"
+        ws.Cells(23, 6).Value = 1
+        wb.Names.Add(Name:="preset_idx", RefersTo:="=SDR!$F$23")
+        ws.Cells(24, 5).Value = "FM Presets (MHz)"
+        for _pf_idx, _pf in enumerate(("90.9", "94.9", "98.7", "102.9", "106.5"), start=1):
+            ws.Cells(24 + _pf_idx, 6).Value = _pf
+        wb.Names.Add(Name:="preset_freqs",
+                     RefersTo:="=SDR!$F$25:$F$29")
+        # S-meter bar: label, numeric cell, 10-cell bar on the right.
+        ws.Cells(21, 12).Value = "S-meter"
+        ws.Cells(21, 14).Value = 0   # numeric level (0-10)
+        wb.Names.Add(Name:="smeter_cell", RefersTo:="=SDR!$N$21")
+        smeter_start = ws.Range("P21:Y21")
+        smeter_start.Interior.Color = 0x3C3C3C   # mid-gray (BGR)
+        smeter_start.Borders.Color = GRAY
+        wb.Names.Add(Name:="smeter_bar", RefersTo:="=SDR!$P$21:$Y$21")
 
         # ── Workbook_Open (auto-start; opt-in via auto_start flag) ──
         # Fires only AFTER the user clicks Enable Content. Safe: calls StartLoop
@@ -745,21 +899,19 @@ def main() -> None:
         st.Range("A2").Value = "Theme"
         st.Range("B2").Value = "Classic"
         st.Range("C2").Value = "Classic | Vapor | Mono"
-
-        # ── Diagnostics sheet ──
-        dg = wb.Worksheets("Diagnostics")
-        dg.Range("A1").Value = "Metric"
-        dg.Range("B1").Value = "Value"
-        dg.Range("A2").Value = "Frames read"
-        dg.Range("B2").Value = 0
-        dg.Range("A3").Value = "Last render (ms)"
-        dg.Range("B3").Value = "--"
-        dg.Range("A4").Value = "Avg render (ms)"
-        dg.Range("B4").Value = "--"
-        dg.Range("A5").Value = "Status"
-        dg.Range("B5").Value = "IDLE"
-        dg.Range("A6").Value = "Mode"
-        dg.Range("B6").Value = "Phase 1 (CSV)"
+        wb.Names.Add(Name:="theme_cell", RefersTo:="=Settings!$B$2")
+        # Make theme changes apply instantly from the Settings cell:
+        # any edit to Settings!B2 fires ApplyTheme (reads theme_cell, re-paints).
+        st_component = wb.VBProject.VBComponents(st.CodeName)
+        st_component.CodeModule.AddFromString(
+            "Private Sub Worksheet_Change(ByVal Target As Range)\n"
+            "    If Not Intersect(Target, Range(\"B2\")) Is Nothing Then\n"
+            "        Application.EnableEvents = False\n"
+            "        Call XDRMain.ApplyTheme\n"
+            "        Application.EnableEvents = True\n"
+            "    End If\n"
+            "End Sub\n"
+        )
 
         # ── SDR is the front panel ──
         # (sheets are created in order: SDR first; Workbook_Open activates it)
