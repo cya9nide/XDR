@@ -1,0 +1,31 @@
+# Excel Defined Radio (XDR)
+
+Copyright (C) 2026  cya9nide
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program (see `licenses/GPL-2.0.txt` and
+`licenses/GPL-3.0.txt`). If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+**Official Support Statement:** No support will be provided. The existence
+of this software should not be interpreted as an endorsement of Excel as a
+radio platform.
+
+**To future engineers:** We're sorry.
+
+---
+
+This license covers the original XDR code in this repository. It is granted
+under GPL-2.0-or-later for compatibility with the third-party GPL components
+this project redistributes (see `THIRD-PARTY-NOTICES.md`).

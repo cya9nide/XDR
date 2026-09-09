@@ -68,4 +68,14 @@ Probably nothing.
 
 ## License
 
-See `LICENSE`. (Spoiler: "No support will be provided.")
+See `LICENSE` (GPL-2.0-or-later). Spoiler: "No support will be provided."
+
+---
+
+###### Third-party software
+
+See [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) (and `licenses/`) for
+the required credits & license texts. In brief: **RTL-SDR Blog drivers**
+`bin/rtl-sdr-blog/*` — GPL-2.0 (rtlsdrblog/rtl-sdr-blog); **Osmocom librtlsdr**
+`python/rtlsdr_libs/librtlsdr.dll` — GPL-2.0 (osmocom/rtl-sdr); **pyrtlsdr**
+— GPL-3.0-or-later; **pyrtlsdrlib** — MIT.
