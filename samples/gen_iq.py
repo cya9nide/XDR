@@ -1,4 +1,4 @@
-"""Generate a deterministic synthetic FM-broadcast IQ file (Phase 2 demo source).
+"""Generate a deterministic synthetic FM-broadcast IQ file (demo source).
 
 No hardware required: this makes an MVP demo always work, forever.
 

@@ -2,7 +2,7 @@ Attribute VB_Name = "XDRMain"
 
 Option Explicit
 Const MODULE_TEST As String = "imported-ok"
-' Phase 1: fake SDR waterfall in cells.
+' Fake SDR waterfall in cells.
 ' Scarecrow: reads frames.csv, paints a 128x64 waterfall via cell colors.
 
 Public Const S_DATA_DIR As String = "..\xdr_data\"
@@ -17,7 +17,7 @@ Public Const FIRST_COL As Long = 2
 Public Const FIRST_ROW As Long = 2
 Public Const FPS_AVG_N As Long = 30
 
-' frames.bin record — layout aligned so VBA reads it natively with Get #f,, udt
+' frames.bin record ï¿½ layout aligned so VBA reads it natively with Get #f,, udt
 Public Type XDRFrame
     magic As Long          ' 0..3    ("XDR1")
     sequence As Long       ' 4..7
@@ -116,7 +116,7 @@ Public Sub PaintWaterfall(frameData() As Double, ByVal rowCount As Long)
     Call PaintWaterfallCF(frameData, rowCount)
     Exit Sub
 EH:
-    ' CF path failed — fall back to the proven per-cell loop
+    ' CF path failed ï¿½ fall back to the proven per-cell loop
     On Error Resume Next
     SetVal "err_cell", "CF paint failed (" & Err.Number & "); using per-cell"
     On Error GoTo 0
@@ -156,7 +156,7 @@ Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
     SetVal "err_cell", ""
 End Sub
 
-' Per-cell fallback (proven in Phase 1) — slow, always works.
+' Per-cell fallback â€” slow, always works.
 Public Sub PaintWaterfallCells(frameData() As Double, ByVal rowCount As Long)
     Dim i As Long, j As Long
     Dim r As Range
@@ -258,7 +258,7 @@ Public Sub SDRSheet_Change(ByVal Target As Range)
         v = Target.Value
         If Not IsNumeric(v) Then Exit Sub
         Select Case r
-        Case 3   ' Frequency (MHz) ? freq_hz (×1e6)
+        Case 3   ' Frequency (MHz) ? freq_hz (ï¿½1e6)
             Call WriteCmd(CLng(CDbl(v) * 1000000#))
         Case 4   ' Sample Rate (MHz) ? sample_rate
             Call WriteCmd(0, CLng(CDbl(v) * 1000000#))
@@ -274,7 +274,7 @@ EH:
     SetVal "err_cell", "Change: " & Err.Number & " " & Err.Description
 End Sub
 
-' -- Phase 6: preset auto-load -----------------------------------------
+' -- preset auto-load -----------------------------------------
 ' Auto-loads the preset when the preset_idx cell (F23) is edited.
 Public Sub PresetIdx_Change(ByVal Target As Range)
     On Error GoTo EH
@@ -287,7 +287,7 @@ Public Sub PresetIdx_Change(ByVal Target As Range)
 EH:
     SetVal "err_cell", "PresetIdx: " & Err.Number & " " & Err.Description
 End Sub
-' -- binary reader (Phase 2) --------------------------------------------
+' -- binary reader --------------------------------------------
 ' Reads the latest frames.bin record via native Get (aligned UDT), dedupes by
 ' sequence, pushes into the ring, and paints via CF.
 Public Sub ReadFrame()
@@ -319,7 +319,7 @@ Public Sub ReadFrame()
     m_frameSeq = fr.sequence
     m_peakIdx = fr.peak_idx
     m_peakVal = fr.peak_val
-    ' Phase 3 status panel — pull what the frame already carries
+    ' status panel â€” pull what the frame already carries
     SetVal "connected_cell", "YES"
     If (fr.flags And FLAG_SR_VALID) <> 0 Then
         SetVal "srate_cell", Format(fr.sample_rate / 1000000#, "0.0") & " MSPS"
@@ -360,7 +360,7 @@ EH:
     SetVal "err_cell", Err.Number & ": " & Err.Description
 End Sub
 
-' -- Phase 6: S-meter -------------------------------------------------
+' -- S-meter -------------------------------------------------
 ' Maps the live peak magnitude (m_peakVal, roughly 0..1.2) onto a 0-10
 ' bar of 10 cells (named range smeter_bar) + a numeric cell (smeter_cell).
 ' Called from ReadFrame every new frame.
@@ -385,7 +385,7 @@ Public Sub UpdateSMeter()
     On Error GoTo 0
 End Sub
 
-' -- Phase 6: presets -------------------------------------------------
+' -- presets -------------------------------------------------
 ' Loads the preset selected by preset_idx from the named preset_freqs
 ' column, pushes it into the Frequency control + cmd.bin, and re-tunes.
 Public Sub LoadPreset()
@@ -443,7 +443,7 @@ Public Sub UpdateDiag()
     On Error GoTo 0
 End Sub
 
-' -- Phase 6: themes ---------------------------------------------------
+' -- themes ---------------------------------------------------
 ' Reads the Theme cell (Settings B2, named theme_cell), clears the region,
 ' writes raw values, and re-paints the color scale for the chosen theme.
 Public Sub ApplyTheme()
@@ -519,7 +519,7 @@ Private Sub ApplyThemeMono()
 End Sub
 
 ' -- loop control -------------------------------------------------------
-' -- loop control (DoEvents render loop — the cursed while-loop) -------
+' -- loop control (DoEvents render loop ï¿½ the cursed while-loop) -------
 ' Runs until the user types STOP in the stop_flag cell (SDR B12) or calls StopLoop.
 Public Sub StartLoop()
     If m_running Then Exit Sub
@@ -587,7 +587,11 @@ Public Sub StartEngine()
         Call ArmStart
         Exit Sub
     End If
-    pid = Shell("C:\Windows\System32\cmd.exe /c cd /d ..\python && uv.exe run python main.py --mode sdr --fps 15 > ..\xdr_data\engine.log 2>&1", vbHide)
+    Dim engDir As String, projRoot As String, q As String
+    q = Chr(34)
+    engDir = ThisWorkbook.Path & "\..\python"
+    projRoot = ThisWorkbook.Path & "\.."
+    pid = Shell("cmd /c cd /d " & q & engDir & q & " && uv run python main.py --mode sdr --fps 15 > " & q & projRoot & "\xdr_data\engine.log" & q & " 2>&1", vbHide)
     Err.Clear
     If pid = 0 Then
         SetVal "err_cell", "engine launch failed"
@@ -599,7 +603,7 @@ Public Sub StartEngine()
 End Sub
 
 ' Arm the heartbeat: schedule a one-shot callback at idle (~1s out) so the
-' button/COM call returns promptly. No named arg — OnTime is positional-only.
+' button/COM call returns promptly. No named arg ï¿½ OnTime is positional-only.
 Public Sub ArmStart()
     m_startPump = True
     Application.OnTime Now + TimeValue("00:00:01"), "XDRMain.Heartbeat"
@@ -699,7 +703,7 @@ Public Sub HardReset()
 End Sub
 
 Public Sub InitDisplay()
-    SetVal "status_cell", "READY (Phase 1)"
+    SetVal "status_cell", "READY"
     SetVal "fps_cell", "--"
     SetVal "paints_cell", 0
     SetVal "seq_cell", 0

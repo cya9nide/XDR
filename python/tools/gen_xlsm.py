@@ -1,4 +1,4 @@
-"""Build the XDR.xlsm workbook via Excel COM — Phase 1 layout + full VBA."""
+"""Build the XDR.xlsm workbook via Excel COM — layout + full VBA."""
 import sys
 from pathlib import Path
 
@@ -35,7 +35,7 @@ RAMP = [
 VBA = r"""
 Option Explicit
 Const MODULE_TEST As String = "imported-ok"
-' Phase 1: fake SDR waterfall in cells.
+' Fake SDR waterfall in cells.
 ' Scarecrow: reads frames.csv, paints a 128x64 waterfall via cell colors.
 
 Public Const S_DATA_DIR As String = "..\xdr_data\"
@@ -189,7 +189,7 @@ Public Sub PaintWaterfallCF(frameData() As Double, ByVal rowCount As Long)
     SetVal "err_cell", ""
 End Sub
 
-' Per-cell fallback (proven in Phase 1) — slow, always works.
+' Per-cell fallback — slow, always works.
 Public Sub PaintWaterfallCells(frameData() As Double, ByVal rowCount As Long)
     Dim i As Long, j As Long
     Dim r As Range
@@ -307,7 +307,7 @@ EH:
     SetVal "err_cell", "Change: " & Err.Number & " " & Err.Description
 End Sub
 
-' ── Phase 6: preset auto-load ─────────────────────────────────────────
+' ── preset auto-load ──────────────────────────────────────────────────
 ' Auto-loads the preset when the preset_idx cell (F23) is edited.
 Public Sub PresetIdx_Change(ByVal Target As Range)
     On Error GoTo EH
@@ -320,7 +320,7 @@ Public Sub PresetIdx_Change(ByVal Target As Range)
 EH:
     SetVal "err_cell", "PresetIdx: " & Err.Number & " " & Err.Description
 End Sub
-' ── binary reader (Phase 2) ────────────────────────────────────────────
+' ── binary reader ─────────────────────────────────────────────────────
 ' Reads the latest frames.bin record via native Get (aligned UDT), dedupes by
 ' sequence, pushes into the ring, and paints via CF.
 Public Sub ReadFrame()
@@ -352,7 +352,7 @@ Public Sub ReadFrame()
     m_frameSeq = fr.sequence
     m_peakIdx = fr.peak_idx
     m_peakVal = fr.peak_val
-    ' Phase 3 status panel — pull what the frame already carries
+    ' status panel — pull what the frame already carries
     SetVal "connected_cell", "YES"
     If (fr.flags And FLAG_SR_VALID) <> 0 Then
         SetVal "srate_cell", Format(fr.sample_rate / 1000000#, "0.0") & " MSPS"
@@ -393,7 +393,7 @@ EH:
     SetVal "err_cell", Err.Number & ": " & Err.Description
 End Sub
 
-' ── Phase 6: S-meter ─────────────────────────────────────────────────
+' ── S-meter ───────────────────────────────────────────────────────────
 ' Maps the live peak magnitude (m_peakVal, roughly 0..1.2) onto a 0-10
 ' bar of 10 cells (named range smeter_bar) + a numeric cell (smeter_cell).
 ' Called from ReadFrame every new frame.
@@ -418,7 +418,7 @@ Public Sub UpdateSMeter()
     On Error GoTo 0
 End Sub
 
-' ── Phase 6: presets ─────────────────────────────────────────────────
+' ── presets ───────────────────────────────────────────────────────────
 ' Loads the preset selected by preset_idx from the named preset_freqs
 ' column, pushes it into the Frequency control + cmd.bin, and re-tunes.
 Public Sub LoadPreset()
@@ -476,7 +476,7 @@ Public Sub UpdateDiag()
     On Error GoTo 0
 End Sub
 
-' ── Phase 6: themes ───────────────────────────────────────────────────
+' ── themes ────────────────────────────────────────────────────────────
 ' Reads the Theme cell (Settings B2, named theme_cell), clears the region,
 ' writes raw values, and re-paints the color scale for the chosen theme.
 Public Sub ApplyTheme()
@@ -620,7 +620,11 @@ Public Sub StartEngine()
         Call ArmStart
         Exit Sub
     End If
-    pid = Shell("C:\Windows\System32\cmd.exe /c cd /d ..\python && uv.exe run python main.py --mode sdr --fps 15 > ..\xdr_data\engine.log 2>&1", vbHide)
+    Dim engDir As String, projRoot As String, q As String
+    q = Chr(34)
+    engDir = ThisWorkbook.Path & "\..\python"
+    projRoot = ThisWorkbook.Path & "\.."
+    pid = Shell("cmd /c cd /d " & q & engDir & q & " && uv run python main.py --mode sdr --fps 15 > " & q & projRoot & "\xdr_data\engine.log" & q & " 2>&1", vbHide)
     Err.Clear
     If pid = 0 Then
         SetVal "err_cell", "engine launch failed"
@@ -732,7 +736,7 @@ Public Sub HardReset()
 End Sub
 
 Public Sub InitDisplay()
-    SetVal "status_cell", "READY (Phase 1)"
+    SetVal "status_cell", "READY"
     SetVal "fps_cell", "--"
     SetVal "paints_cell", 0
     SetVal "seq_cell", 0
@@ -805,7 +809,7 @@ def main() -> None:
         ws.Cells(16, 2).Value = 0
         wb.Names.Add("frames_read_cell", ws.Cells(16, 2))
 
-        # status panel (Phase 3): Connected / Sample Rate / Signal Strength
+        # status panel: Connected / Sample Rate / Signal Strength
         ws.Cells(17, 1).Value = "Connected"
         ws.Cells(17, 2).Value = "NO"
         ws.Cells(18, 1).Value = "Sample Rate"
@@ -849,7 +853,7 @@ def main() -> None:
         ws.Cells(22, 6).Value = "FALSE"
         wb.Names.Add(Name="auto_start", RefersTo="=SDR!$F$22")
 
-        # ── Phase 6: presets + S-meter controls (SDR sheet) ──
+        # ── presets + S-meter controls (SDR sheet) ──
         # Preset list in col H (loaded by LOAD PRESET button). Index in F23.
         ws.Cells(23, 5).Value = "Preset #"
         ws.Cells(23, 6).Value = 1

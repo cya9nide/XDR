@@ -3,7 +3,7 @@
 IQ captures and generators. Big binary captures are gitignored — commit only tiny
 deterministic samples or the generator script itself.
 
-- `gen_iq.py` — (Phase 2) synthetic deterministic FM IQ generator (tones → music).
-- `demo.iq` — optional tiny committed capture (see docs/architecture.md).
+- `gen_iq.py` — synthetic deterministic FM IQ generator (tones → music).
+- `demo.iq` — optional tiny committed capture.
 
-For now: placeholder. The Phase 2 generator will live here.
+For now: placeholder. The generator will live here.

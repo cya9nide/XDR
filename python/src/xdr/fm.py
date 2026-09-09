@@ -1,6 +1,6 @@
 """FM demodulation — because GNU Radio was too mainstream.
 
-Phase 5: turn IQ samples into broadcast-audio samples with numpy.
+Turn IQ samples into broadcast-audio samples with numpy.
 
 Chain (all numpy, ~40 lines):
     1. freq_shift  — mix the carrier down to DC (center the station)

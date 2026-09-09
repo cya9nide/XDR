@@ -1,6 +1,6 @@
 """XDR signal processing — because GNU Radio was too mainstream.
 
-Phase 2+: numpy FFT → magnitude bins. Phase 3+: real IQ from hardware.
+numpy FFT → magnitude bins; real IQ from hardware when available.
 """
 
 from __future__ import annotations

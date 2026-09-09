@@ -1,7 +1,9 @@
 """XDR helper app — boots the cursed pipeline.
 
-Phase 1: fake SDR → CSV scarecrow → Excel paints cells.
-Phase 2+: binary frames.bin wire. Phase 3+: SoapySDR hardware.
+Modes:
+  csv   — synthetic FFT from a CSV scarecrow file.
+  bin   — read a pre-generated IQ file, FFT it, write binary frames.
+  sdr   — live hardware: poll cmd.bin, stream FFT frames, demodulate audio.
 """
 
 from __future__ import annotations
@@ -64,7 +66,7 @@ def run_fake(duration: float, per_frame: float) -> None:
 
 
 def run_fake_csv(duration: float, per_frame: float) -> None:
-    """Fake SDR, Phase 1 CSV scarecrow: 128 values per line, overwritten in place."""
+    """Synthetic FFT: 128 values per line, overwritten in place."""
     out = DATA_DIR / "frames.csv"
     out.parent.mkdir(exist_ok=True)
     rng = np.random.default_rng(0xC0FFEE)
@@ -96,7 +98,7 @@ def run_fake_csv(duration: float, per_frame: float) -> None:
 
 
 def run_live_fft(source: Path, per_frame: float) -> None:
-    """Phase 2: read IQ file, FFT sliding windows, write binary frames in a loop."""
+    """Read IQ file, FFT sliding windows, write binary frames in a loop."""
     out = DATA_DIR / "frames.bin"
     out.parent.mkdir(exist_ok=True)
     if not source.is_file():
@@ -134,8 +136,7 @@ def run_live_fft(source: Path, per_frame: float) -> None:
 
 
 def run_sdr(per_frame: float) -> None:
-    """Phase 3+5: live SDR — poll cmd.bin for tune, stream FFT frames,
-    and (Phase 5) demodulate the tuned station to audio out."""
+    """Live SDR — poll cmd.bin for tune, stream FFT frames, demodulate audio."""
     print("[xdr] sdr mode: probing backends...")
     try:
         devs, name = list_devices()
@@ -234,7 +235,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["fake", "live", "sdr"], default="fake")
     parser.add_argument("--source", type=Path, default=None, help="IQ file for --mode live")
     parser.add_argument("--wire", choices=["bin", "csv"], default="bin",
-                        help="Phase 1 scarecrow (csv) or binary protocol (bin)")
+                        help="scarecrow (csv) or binary protocol (bin)")
     parser.add_argument("--fps", type=float, default=15.0, help="frames per second")
     parser.add_argument("--duration", type=float, default=0, help="seconds to run (0 = forever)")
     args = parser.parse_args()
