@@ -10,6 +10,8 @@
 
 ![Excel Defined Radio](assets/banner.png)
 
+![XDR in action](assets/XDR.gif)
+
 ---
 
 ## What is this?

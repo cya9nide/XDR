@@ -25,6 +25,7 @@ Thumbs.db
 .DS_Store
 
 # Docs
+docs/
 docs/screenshots/*.png
 
 # Media (large; commit only for release)
